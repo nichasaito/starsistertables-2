@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "484776910096",
+    "project_id": "starsister-tables",
+    "storage_bucket": "starsister-tables.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:484776910096:android:49d9cbaf8a2a80b9255995",
+        "android_client_info": {
+          "package_name": "com.example.starsister_tables"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaWYprAcFAqXcslrotuwWagv3Icm-KjoE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:484776910096:android:8bbb6415c1bdf413255995",
+        "android_client_info": {
+          "package_name": "com.example.starsistertables"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaWYprAcFAqXcslrotuwWagv3Icm-KjoE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
