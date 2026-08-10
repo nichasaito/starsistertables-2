@@ -11,7 +11,7 @@ import 'firebase_options.dart';
 // ตัวแปร Global สำหรับเก็บข้อมูลผู้ใช้งานปัจจุบัน
 String globalUserId = '';
 String globalUserName = '';
-String globalUserAvatar = '🐱'; // อาจเป็น Emoji หรือ URL รูปภาพ
+String globalUserAvatar = '🐱';
 String globalUserTitle = '';
 
 const List<String> avatarList = [
@@ -57,7 +57,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Widget สำหรับแสดงผลรูปโปรไฟล์ (รองรับทั้ง URL รูปภาพ และ Emoji สัญลักษณ์)
+// Widget สำหรับแสดงผลรูปโปรไฟล์
 Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize = 24}) {
   bool isUrl = avatar.startsWith('http://') || avatar.startsWith('https://');
   return CircleAvatar(
@@ -172,11 +172,16 @@ class _AuthScreenState extends State<AuthScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'StarSister Tables',
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blue[900]),
+                  Image.asset(
+                    'assets/images/starsister_logo.png',
+                    height: 120,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) => Text(
+                      'StarSister Tables',
+                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blue[900]),
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Text(
                     isLogin ? 'เข้าสู่ระบบเพื่อใช้งาน' : 'สร้างโปรไฟล์ใหม่',
                     style: const TextStyle(color: Colors.grey, fontSize: 16),
@@ -763,8 +768,17 @@ class TableGrid extends StatelessWidget {
 
         final docs = snapshot.data!.docs;
         DateTime? latestTime;
+        int availableCount = 0;
+        int occupiedCount = 0;
+
         for (var doc in docs) {
           final data = doc.data() as Map<String, dynamic>;
+          if (data['isAvailable'] == true) {
+            availableCount++;
+          } else {
+            occupiedCount++;
+          }
+
           if (data['lastUpdated'] != null) {
             final Timestamp ts = data['lastUpdated'];
             final DateTime docTime = ts.toDate();
@@ -786,10 +800,29 @@ class TableGrid extends StatelessWidget {
           content = const Center(child: Text('ไม่มีข้อมูลแผนผัง'));
         }
 
-        return Stack(
+        return Column(
           children: [
-            content,
-            Positioned(bottom: 12, left: 12, child: LastUpdateWidget(updateTime: lastUpdateTime)),
+            // แถบสรุปสถานะจำนวนโต๊ะ
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.blue[50],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  Text('ทั้งหมด: ${docs.length}', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue[900])),
+                  Text('ว่าง: $availableCount', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                  Text('ไม่ว่าง: $occupiedCount', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  content,
+                  Positioned(bottom: 12, left: 12, child: LastUpdateWidget(updateTime: lastUpdateTime)),
+                ],
+              ),
+            ),
           ],
         );
       },
@@ -798,7 +831,7 @@ class TableGrid extends StatelessWidget {
 }
 
 // ==========================================
-// FloorPlanCard
+// FloorPlanCard: แสดงเวลาแบบ HH:mm น. (ไม่มีวินาที)
 // ==========================================
 class FloorPlanCard extends StatelessWidget {
   final String expectedName;
@@ -861,13 +894,13 @@ class FloorPlanCard extends StatelessWidget {
     final String updatedBy = data['updatedBy'] ?? 'ไม่ทราบชื่อ';
     final Timestamp? ts = data['lastUpdated'];
 
+    // แปลงเวลาให้เหลือแค่ ชั่วโมง:นาที (HH:mm น.)
     String timeStr = '';
     if (ts != null) {
       final dt = ts.toDate();
       final h = dt.hour.toString().padLeft(2, '0');
       final m = dt.minute.toString().padLeft(2, '0');
-      final s = dt.second.toString().padLeft(2, '0');
-      timeStr = ' ($h:$m:$s น.)';
+      timeStr = ' ($h:$m น.)';
     }
 
     return Card(
@@ -1080,6 +1113,7 @@ class CustomFloorPlanF3 extends StatelessWidget {
   }
 }
 
+// แสดงเวลาแบบ HH:mm น. (ไม่มีวินาที)
 class LastUpdateWidget extends StatelessWidget {
   final DateTime updateTime;
   const LastUpdateWidget({super.key, required this.updateTime});
@@ -1088,7 +1122,6 @@ class LastUpdateWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final h = updateTime.hour.toString().padLeft(2, '0');
     final m = updateTime.minute.toString().padLeft(2, '0');
-    final s = updateTime.second.toString().padLeft(2, '0');
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), 
@@ -1098,7 +1131,7 @@ class LastUpdateWidget extends StatelessWidget {
         boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
       ),
       child: Text(
-        'อัปเดตล่าสุด: $h:$m:$s น.',
+        'อัปเดตล่าสุด: $h:$m น.',
         style: TextStyle(color: Colors.blue[900], fontSize: 16, fontWeight: FontWeight.bold), 
       ),
     );
@@ -1106,7 +1139,7 @@ class LastUpdateWidget extends StatelessWidget {
 }
 
 // ==========================================
-// LeaderboardScreen (พร้อมปุ่มลบโปรไฟล์)
+// LeaderboardScreen
 // ==========================================
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -1319,24 +1352,38 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     const SizedBox(height: 12),
 
                     _buildTitleRewardItem(
-                      title: 'นักอัปเดตโต๊ะขั้นต้น 🥉',
+                      title: 'นักอัปเดตโต๊ะ 🥉',
                       requiredScore: 100,
                       currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 100, 'นักอัปเดตโต๊ะขั้นต้น 🥉'),
+                      onClaim: () => _claimTitle(myCurrentScore, 100, 'นักอัปเดตโต๊ะ 🥉'),
                     ),
                     const SizedBox(height: 10),
                     _buildTitleRewardItem(
-                      title: 'ยอดนักอัปเดตโต๊ะ 🥈',
+                      title: 'นักอัปเดตโต๊ะจอมซน 😼',
+                      requiredScore: 300,
+                      currentScore: myCurrentScore,
+                      onClaim: () => _claimTitle(myCurrentScore, 300, 'นักอัปเดตโต๊ะจอมซน 😼'),
+                    ),
+                    const SizedBox(height: 10),
+                    _buildTitleRewardItem(
+                      title: 'ยอดอัพเดตโต๊ะ 🥈',
                       requiredScore: 500,
                       currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 500, 'ยอดนักอัปเดตโต๊ะ 🥈'),
+                      onClaim: () => _claimTitle(myCurrentScore, 500, 'ยอดอัพเดตโต๊ะ 🥈'),
                     ),
                     const SizedBox(height: 10),
                     _buildTitleRewardItem(
                       title: 'ท่านเทพอัพเดตโต๊ะ 🥇',
+                      requiredScore: 700,
+                      currentScore: myCurrentScore,
+                      onClaim: () => _claimTitle(myCurrentScore, 700, 'ท่านเทพอัพเดตโต๊ะ 🥇'),
+                    ),
+                    const SizedBox(height: 10),
+                    _buildTitleRewardItem(
+                      title: 'GMจอมขยัน 👑',
                       requiredScore: 1000,
                       currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 1000, 'ท่านเทพอัพเดตโต๊ะ 🥇'),
+                      onClaim: () => _claimTitle(myCurrentScore, 1000, 'GMจอมขยัน 👑'),
                     ),
                   ],
                 ),
