@@ -70,3 +70,7 @@
     <string>ขออนุญาตเข้าถึงคลังรูปภาพเพื่อเลือกรูปโปรไฟล์</string>
 </dict>
 </plist>
+<key>NSPhotoLibraryUsageDescription</key>
+<string>ขออนุญาตเข้าถึงรูปภาพเพื่อใช้ตั้งเป็นรูปโปรไฟล์</string>
+<key>NSCameraUsageDescription</key>
+<string>ขออนุญาตเข้าถึงกล้องเพื่อถ่ายภาพโปรไฟล์</string>

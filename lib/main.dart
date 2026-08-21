@@ -15,6 +15,8 @@ String globalUserName = '';
 String globalUserAvatar = '🐱';
 String globalUserTitle = '';
 String globalUserFrame = ''; // 'gold', 'neon', ''
+List<String> globalUnlockedTitles = [];
+List<String> globalUnlockedFrames = [];
 Timestamp? globalBuffX2Until;
 int globalUserLevel = 1;
 int globalUserUpdateCount = 0;
@@ -24,16 +26,11 @@ Map<String, dynamic> globalLastHeartSent = {};
 
 // คลังอิโมจิโปรไฟล์แบบจุใจ 60+ แบบ
 const List<String> avatarList = [
-  // สัตว์น่ารัก (Animals)
   '🐱', '🐶', '🦊', '🐼', '🐰', '🐻', '🦁', '🐯', '🐸', '🐵', 
   '🦄', '🐧', '🦉', '🐨', '🐹', '🐥', '🐙', '🐬', '🦖', '🐝', 
-  '🦋', '🦥', '🦦', '🦔', '🐺', '🦊', '🐮', '🐷', '🐲', '🦈',
-  
-  // ของกินและเครื่องดื่ม (Food & Drinks)
+  '🦋', '🦥', '🦦', '🦔', '🐺', '🐮', '🐷', '🐲', '🦈',
   '☕', '🧋', '🍰', '🍩', '🍕', '🍔', '🍟', '🍣', '🍦', '🍓', 
   '🥑', '🍜', '🥐', '🥞', '🍪', '🍫', '🍿', '🍹', '🍧', '🍉',
-  
-  // สัญลักษณ์ กิจกรรม และแฟนตาซี (Vibes & Fantasy)
   '👑', '⭐', '✨', '🔥', '💎', '🎮', '🎱', '🎯', '🎨', '🎧', 
   '🚀', '🛸', '⚡', '🌈', '🍀', '🌸', '🌻', '🌙', '🪄', '💖'
 ];
@@ -112,47 +109,41 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
   return circle;
 }
 
-// ระบบบันทึกและคำนวณเลเวล + โบนัส 20 คะแนน (รองรับบัฟแต้ม x2)
+// ระบบบันทึกและคำนวณเลเวล รองรับคนกดพร้อมกันโดยใช้ FieldValue.increment
 Future<void> registerUserUpdateAction(BuildContext? context) async {
   if (globalUserId.isEmpty) return;
 
   final userDocRef = FirebaseFirestore.instance.collection('users').doc(globalUserId);
 
   try {
-    await FirebaseFirestore.instance.runTransaction((transaction) async {
-      final snapshot = await transaction.get(userDocRef);
-      if (!snapshot.exists) return;
+    bool isBuffActive = globalBuffX2Until != null && globalBuffX2Until!.toDate().isAfter(DateTime.now());
+    int scoreGained = isBuffActive ? 2 : 1;
 
-      final data = snapshot.data() as Map<String, dynamic>;
-      int curClicks = (data['updateCount'] ?? 0) + 1;
-      int curLevel = data['level'] ?? 1;
-      int curScore = data['score'] ?? 0;
-      final Timestamp? buffUntil = data['buffX2Until'];
-      
-      bool isBuffActive = buffUntil != null && buffUntil.toDate().isAfter(DateTime.now());
+    await userDocRef.update({
+      'updateCount': FieldValue.increment(1),
+      'score': FieldValue.increment(scoreGained),
+    });
+
+    globalUserUpdateCount += 1;
+    globalUserScore += scoreGained;
+
+    if (globalUserUpdateCount >= 100) {
+      int gainedLevels = globalUserUpdateCount ~/ 100;
+      globalUserUpdateCount = globalUserUpdateCount % 100;
+      globalUserLevel += gainedLevels;
+
       int baseBonus = 20;
-      int actualBonus = isBuffActive ? baseBonus * 2 : baseBonus;
-      bool leveledUp = false;
+      int bonusScore = isBuffActive ? (baseBonus * 2 * gainedLevels) : (baseBonus * gainedLevels);
 
-      if (curClicks >= 100) {
-        int gainedLevels = curClicks ~/ 100;
-        curLevel += gainedLevels;
-        curScore += gainedLevels * actualBonus;
-        curClicks = curClicks % 100;
-        leveledUp = true;
-      }
-
-      transaction.update(userDocRef, {
-        'updateCount': curClicks,
-        'level': curLevel,
-        'score': curScore,
+      await userDocRef.update({
+        'level': FieldValue.increment(gainedLevels),
+        'score': FieldValue.increment(bonusScore),
+        'updateCount': globalUserUpdateCount,
       });
 
-      globalUserUpdateCount = curClicks;
-      globalUserLevel = curLevel;
-      globalUserScore = curScore;
+      globalUserScore += bonusScore;
 
-      if (leveledUp && context != null && context.mounted) {
+      if (context != null && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.amber[800],
@@ -163,8 +154,8 @@ Future<void> registerUserUpdateAction(BuildContext? context) async {
                 Expanded(
                   child: Text(
                     isBuffActive 
-                        ? '🎉 ยินดีด้วย! เลเวลอัปเป็น Lv.$curLevel (+โบนัสบัฟ x2 = $actualBonus แต้ม)'
-                        : '🎉 ยินดีด้วย! เลเวลอัปเป็น Lv.$curLevel (+$actualBonus คะแนนโบนัส)',
+                        ? '🎉 เลเวลอัปเป็น Lv.$globalUserLevel! (+โบนัสบัฟ x2 = $bonusScore แต้ม)'
+                        : '🎉 เลเวลอัปเป็น Lv.$globalUserLevel! (+$bonusScore คะแนนโบนัส)',
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                   ),
                 ),
@@ -174,7 +165,7 @@ Future<void> registerUserUpdateAction(BuildContext? context) async {
           ),
         );
       }
-    });
+    }
   } catch (e) {
     debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล: $e');
   }
@@ -255,13 +246,14 @@ class _AuthScreenState extends State<AuthScreen> {
           'level': 1,
           'title': '',
           'frame': '',
+          'unlockedTitles': [],
+          'unlockedFrames': [],
           'buffX2Until': null,
           'email': email,
         });
       }
     } on FirebaseAuthException catch (e) {
       String msg = 'เกิดข้อผิดพลาด (${e.code})';
-
       if (e.code == 'user-not-found' || e.code == 'wrong-password' || e.code == 'invalid-credential') {
         msg = 'อีเมลหรือรหัสผ่านไม่ถูกต้อง';
       } else if (e.code == 'email-already-in-use') {
@@ -270,12 +262,7 @@ class _AuthScreenState extends State<AuthScreen> {
         msg = 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
       } else if (e.code == 'invalid-email') {
         msg = 'รูปแบบอีเมลไม่ถูกต้อง';
-      } else if (e.code == 'operation-not-allowed') {
-        msg = 'ยังไม่ได้เปิดใช้งาน Email/Password ใน Firebase Console';
-      } else if (e.code == 'network-request-failed') {
-        msg = 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตได้';
       }
-
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
@@ -299,20 +286,11 @@ class _AuthScreenState extends State<AuthScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    'StarSister Tables',
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blue[900]),
-                  ),
+                  Text('StarSister Tables', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blue[900])),
                   const SizedBox(height: 12),
-                  Text(
-                    isLogin ? 'เข้าสู่ระบบเพื่อใช้งาน' : 'สร้างโปรไฟล์ใหม่',
-                    style: const TextStyle(color: Colors.grey, fontSize: 16),
-                  ),
+                  Text(isLogin ? 'เข้าสู่ระบบเพื่อใช้งาน' : 'สร้างโปรไฟล์ใหม่', style: const TextStyle(color: Colors.grey, fontSize: 16)),
                   const SizedBox(height: 20),
-
                   if (!isLogin) ...[
-                    const Text('เลือกรูปโปรไฟล์', style: TextStyle(fontSize: 14, color: Colors.grey)),
-                    const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -320,93 +298,35 @@ class _AuthScreenState extends State<AuthScreen> {
                           radius: 32,
                           backgroundColor: Colors.blue[50],
                           backgroundImage: _pickedImageFile != null ? FileImage(_pickedImageFile!) : null,
-                          child: _pickedImageFile == null
-                              ? Text(_selectedAvatar, style: const TextStyle(fontSize: 32))
-                              : null,
+                          child: _pickedImageFile == null ? Text(_selectedAvatar, style: const TextStyle(fontSize: 32)) : null,
                         ),
                         const SizedBox(width: 12),
                         ElevatedButton.icon(
                           onPressed: _pickImage,
                           icon: const Icon(Icons.image, size: 18),
-                          label: const Text('เลือกจากโทรศัพท์'),
+                          label: const Text('เลือกรูป'),
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Container(
-                      height: 140,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[100],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.grey[300]!),
-                      ),
-                      child: Scrollbar(
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            alignment: WrapAlignment.center,
-                            children: avatarList.map((avatar) {
-                              final isSelected = avatar == _selectedAvatar && _pickedImageFile == null;
-                              return GestureDetector(
-                                onTap: () => setState(() {
-                                  _selectedAvatar = avatar;
-                                  _pickedImageFile = null;
-                                }),
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: isSelected ? Colors.blue[100] : Colors.white,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: isSelected ? Colors.blue[900]! : Colors.grey[300]!,
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: Center(child: Text(avatar, style: const TextStyle(fontSize: 20))),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
                     TextField(
                       controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'ชื่อผู้ใช้งาน (เช่น Nicha)',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.person),
-                      ),
+                      decoration: const InputDecoration(labelText: 'ชื่อผู้ใช้งาน', border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
                     ),
                     const SizedBox(height: 16),
                   ],
-
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'อีเมล (Email)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.email),
-                    ),
+                    decoration: const InputDecoration(labelText: 'อีเมล (Email)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
                   ),
                   const SizedBox(height: 16),
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'รหัสผ่าน (อย่างน้อย 6 ตัวอักษร)',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock),
-                    ),
+                    decoration: const InputDecoration(labelText: 'รหัสผ่าน (อย่างน้อย 6 ตัวอักษร)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
                   ),
                   const SizedBox(height: 24),
-
                   if (_isLoading)
                     const CircularProgressIndicator()
                   else
@@ -419,20 +339,13 @@ class _AuthScreenState extends State<AuthScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         onPressed: _submit,
-                        child: Text(
-                          isLogin ? 'เข้าสู่ระบบ' : 'ลงทะเบียนใช้งาน',
-                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
+                        child: Text(isLogin ? 'เข้าสู่ระบบ' : 'ลงทะเบียนใช้งาน', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
-
                   const SizedBox(height: 12),
                   TextButton(
                     onPressed: () => setState(() => isLogin = !isLogin),
-                    child: Text(
-                      isLogin ? 'ยังไม่มีบัญชี? สมัครสมาชิกที่นี่' : 'มีบัญชีอยู่แล้ว? เข้าสู่ระบบ',
-                      style: TextStyle(color: Colors.blue[900]),
-                    ),
+                    child: Text(isLogin ? 'ยังไม่มีบัญชี? สมัครสมาชิกที่นี่' : 'มีบัญชีอยู่แล้ว? เข้าสู่ระบบ', style: TextStyle(color: Colors.blue[900])),
                   ),
                 ],
               ),
@@ -477,6 +390,17 @@ class _MainScreenState extends State<MainScreen> {
             globalUserAvatar = data['avatar'] ?? '🐱';
             globalUserTitle = data['title'] ?? '';
             globalUserFrame = data['frame'] ?? '';
+            globalUnlockedTitles = List<String>.from(data['unlockedTitles'] ?? []);
+            globalUnlockedFrames = List<String>.from(data['unlockedFrames'] ?? []);
+            
+            // ซิงค์ฉายา/กรอบปัจจุบันเข้าคลังอัตโนมัติหากยังไม่มี
+            if (globalUserTitle.isNotEmpty && !globalUnlockedTitles.contains(globalUserTitle)) {
+              globalUnlockedTitles.add(globalUserTitle);
+            }
+            if (globalUserFrame.isNotEmpty && !globalUnlockedFrames.contains(globalUserFrame)) {
+              globalUnlockedFrames.add(globalUserFrame);
+            }
+
             globalBuffX2Until = data['buffX2Until'];
             globalUserLevel = data['level'] ?? 1;
             globalUserUpdateCount = data['updateCount'] ?? 0;
@@ -499,6 +423,8 @@ class _MainScreenState extends State<MainScreen> {
   void _showEditProfileDialog() {
     final TextEditingController nameController = TextEditingController(text: globalUserName);
     String selectedAvatar = globalUserAvatar;
+    String selectedTitle = globalUserTitle;
+    String selectedFrame = globalUserFrame;
     File? newPickedFile;
     bool isSaving = false;
 
@@ -509,7 +435,7 @@ class _MainScreenState extends State<MainScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('แก้ไขโปรไฟล์', style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text('แก้ไขโปรไฟล์ & ตกแต่ง', style: TextStyle(fontWeight: FontWeight.bold)),
               content: SizedBox(
                 width: double.maxFinite,
                 child: SingleChildScrollView(
@@ -523,20 +449,23 @@ class _MainScreenState extends State<MainScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           newPickedFile != null
-                              ? CircleAvatar(radius: 28, backgroundImage: FileImage(newPickedFile!))
-                              : buildUserAvatarWidget(selectedAvatar, radius: 28, fontSize: 28, frame: globalUserFrame),
+                              ? Container(
+                                  decoration: selectedFrame == 'gold'
+                                      ? BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.amber[600]!, width: 3))
+                                      : selectedFrame == 'neon'
+                                          ? BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.cyanAccent, width: 3))
+                                          : null,
+                                  padding: const EdgeInsets.all(2),
+                                  child: CircleAvatar(radius: 28, backgroundImage: FileImage(newPickedFile!)),
+                                )
+                              : buildUserAvatarWidget(selectedAvatar, radius: 28, fontSize: 28, frame: selectedFrame),
                           const SizedBox(width: 12),
                           ElevatedButton.icon(
                             onPressed: isSaving
                                 ? null
                                 : () async {
                                     final picker = ImagePicker();
-                                    final picked = await picker.pickImage(
-                                      source: ImageSource.gallery,
-                                      maxWidth: 500,
-                                      maxHeight: 500,
-                                      imageQuality: 80,
-                                    );
+                                    final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 500, maxHeight: 500, imageQuality: 80);
                                     if (picked != null) {
                                       setDialogState(() {
                                         newPickedFile = File(picked.path);
@@ -550,7 +479,7 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                       const SizedBox(height: 12),
                       Container(
-                        height: 140,
+                        height: 120,
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                           color: Colors.grey[100],
@@ -567,24 +496,19 @@ class _MainScreenState extends State<MainScreen> {
                               children: avatarList.map((avatar) {
                                 final isSelected = avatar == selectedAvatar && newPickedFile == null;
                                 return GestureDetector(
-                                  onTap: isSaving
-                                      ? null
-                                      : () => setDialogState(() {
-                                            selectedAvatar = avatar;
-                                            newPickedFile = null;
-                                          }),
+                                  onTap: isSaving ? null : () => setDialogState(() {
+                                    selectedAvatar = avatar;
+                                    newPickedFile = null;
+                                  }),
                                   child: Container(
-                                    width: 40,
-                                    height: 40,
+                                    width: 38,
+                                    height: 38,
                                     decoration: BoxDecoration(
                                       color: isSelected ? Colors.blue[100] : Colors.white,
                                       shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: isSelected ? Colors.blue[900]! : Colors.grey[300]!,
-                                        width: isSelected ? 2 : 1,
-                                      ),
+                                      border: Border.all(color: isSelected ? Colors.blue[900]! : Colors.grey[300]!, width: isSelected ? 2 : 1),
                                     ),
-                                    child: Center(child: Text(avatar, style: const TextStyle(fontSize: 20))),
+                                    child: Center(child: Text(avatar, style: const TextStyle(fontSize: 18))),
                                   ),
                                 );
                               }).toList(),
@@ -596,11 +520,71 @@ class _MainScreenState extends State<MainScreen> {
                       TextField(
                         controller: nameController,
                         enabled: !isSaving,
-                        decoration: const InputDecoration(
-                          labelText: 'ชื่อผู้ใช้งาน',
-                          border: OutlineInputBorder(),
-                        ),
+                        decoration: const InputDecoration(labelText: 'ชื่อผู้ใช้งาน', border: OutlineInputBorder()),
                       ),
+                      const SizedBox(height: 16),
+
+                      // เลือกลายกรอบโปรไฟล์ที่มี
+                      const Text('🖼️ กรอบโปรไฟล์ที่ปลดล็อกแล้ว', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          ChoiceChip(
+                            label: const Text('ไม่ใส่กรอบ'),
+                            selected: selectedFrame.isEmpty,
+                            onSelected: (selected) {
+                              if (selected) setDialogState(() => selectedFrame = '');
+                            },
+                          ),
+                          if (globalUnlockedFrames.contains('neon'))
+                            ChoiceChip(
+                              label: const Text('💎 นีออน'),
+                              selected: selectedFrame == 'neon',
+                              selectedColor: Colors.cyan[100],
+                              onSelected: (selected) {
+                                setDialogState(() => selectedFrame = selected ? 'neon' : '');
+                              },
+                            ),
+                          if (globalUnlockedFrames.contains('gold'))
+                            ChoiceChip(
+                              label: const Text('👑 ทองคำ'),
+                              selected: selectedFrame == 'gold',
+                              selectedColor: Colors.amber[100],
+                              onSelected: (selected) {
+                                setDialogState(() => selectedFrame = selected ? 'gold' : '');
+                              },
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // เลือกฉายาที่มี
+                      const Text('🎖️ ฉายาที่ปลดล็อกแล้ว', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      const SizedBox(height: 8),
+                      globalUnlockedTitles.isEmpty
+                          ? const Text('ยังไม่มีฉายา (ไปแลกหรือสุ่มได้ที่ร้านค้า)', style: TextStyle(color: Colors.grey, fontSize: 13))
+                          : Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('ไม่ใช้ฉายา'),
+                                  selected: selectedTitle.isEmpty,
+                                  onSelected: (selected) {
+                                    if (selected) setDialogState(() => selectedTitle = '');
+                                  },
+                                ),
+                                ...globalUnlockedTitles.map((t) => ChoiceChip(
+                                      label: Text(t),
+                                      selected: selectedTitle == t,
+                                      selectedColor: Colors.amber[200],
+                                      onSelected: (selected) {
+                                        setDialogState(() => selectedTitle = selected ? t : '');
+                                      },
+                                    )),
+                              ],
+                            ),
                     ],
                   ),
                 ),
@@ -623,12 +607,8 @@ class _MainScreenState extends State<MainScreen> {
 
                           try {
                             String finalAvatar = selectedAvatar;
-
                             if (newPickedFile != null) {
-                              final ref = FirebaseStorage.instance
-                                  .ref()
-                                  .child('user_avatars')
-                                  .child('$globalUserId.jpg');
+                              final ref = FirebaseStorage.instance.ref().child('user_avatars').child('$globalUserId.jpg');
                               await ref.putFile(newPickedFile!);
                               finalAvatar = await ref.getDownloadURL();
                             }
@@ -636,29 +616,27 @@ class _MainScreenState extends State<MainScreen> {
                             await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
                               'name': newName,
                               'avatar': finalAvatar,
+                              'title': selectedTitle,
+                              'frame': selectedFrame,
                             });
 
                             setState(() {
                               globalUserName = newName;
                               globalUserAvatar = finalAvatar;
+                              globalUserTitle = selectedTitle;
+                              globalUserFrame = selectedFrame;
                             });
 
                             if (dialogContext.mounted) Navigator.pop(dialogContext);
                           } catch (e) {
                             setDialogState(() => isSaving = false);
                             if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('เกิดข้อผิดพลาดในการบันทึก: $e')),
-                              );
+                              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('เกิดข้อผิดพลาดในการบันทึก: $e')));
                             }
                           }
                         },
                   child: isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                       : const Text('บันทึก', style: TextStyle(color: Colors.white)),
                 ),
               ],
@@ -692,7 +670,7 @@ class _MainScreenState extends State<MainScreen> {
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.table_restaurant), label: 'ผังโต๊ะ'),
-          BottomNavigationBarItem(icon: Icon(Icons.leaderboard), label: 'Leaderboard'),
+          BottomNavigationBarItem(icon: Icon(Icons.leaderboard), label: 'Leaderboard & Shop'),
         ],
       ),
     );
@@ -704,7 +682,6 @@ class _MainScreenState extends State<MainScreen> {
 // ==========================================
 class TableStatusScreen extends StatefulWidget {
   final VoidCallback onEditProfile;
-
   const TableStatusScreen({super.key, required this.onEditProfile});
 
   @override
@@ -737,7 +714,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
             controller: noteCtrl,
             maxLines: 4,
             decoration: const InputDecoration(
-              hintText: 'พิมพ์ข้อความประกาศ เช่น วันนี้มีจองห้อง VIP 20:00 น. หรือเบียร์โปรโมชั่น...',
+              hintText: 'พิมพ์ข้อความประกาศ...',
               border: OutlineInputBorder(),
             ),
           ),
@@ -750,9 +727,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
               style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
               onPressed: () async {
                 final text = noteCtrl.text.trim();
-                final String userDisplayName = globalUserTitle.isNotEmpty 
-                    ? '$globalUserName [$globalUserTitle]' 
-                    : globalUserName;
+                final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
                 await FirebaseFirestore.instance.collection('app_settings').doc('daily_note').set({
                   'message': text,
@@ -781,21 +756,15 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
           title: Row(
             children: [
               const Icon(Icons.cleaning_services, color: Colors.blue),
-              const SizedBox(width: 8),
+              SizedBox(width: 8),
               Text('เปลี่ยนสถานะทุกโต๊ะ ($floorName)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             ],
           ),
-          content: const Text(
-            'กรุณาเลือกสถานะที่ต้องการปรับใช้กับทุกโต๊ะในชั้นนี้พร้อมกัน:',
-            style: TextStyle(fontSize: 15),
-          ),
+          content: const Text('กรุณาเลือกสถานะที่ต้องการปรับใช้กับทุกโต๊ะในชั้นนี้พร้อมกัน:'),
           actionsAlignment: MainAxisAlignment.spaceEvenly,
           actions: [
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
               icon: const Icon(Icons.check_circle, color: Colors.white, size: 18),
               label: const Text('ว่างทั้งหมด', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               onPressed: () {
@@ -804,10 +773,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
               },
             ),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               icon: const Icon(Icons.cancel, color: Colors.white, size: 18),
               label: const Text('ไม่ว่างทั้งหมด', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               onPressed: () {
@@ -823,16 +789,13 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
   Future<void> _executeBatchStatusUpdate(String collectionName, String floorName, bool targetStatus) async {
     final collectionRef = FirebaseFirestore.instance.collection(collectionName);
-
     try {
       final snapshot = await collectionRef.get();
       if (snapshot.docs.isEmpty) return;
 
       final batch = FirebaseFirestore.instance.batch();
       final now = Timestamp.now();
-      final String userDisplayName = globalUserTitle.isNotEmpty 
-          ? '$globalUserName [$globalUserTitle]' 
-          : globalUserName;
+      final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
       for (var doc in snapshot.docs) {
         batch.update(doc.reference, {
@@ -854,11 +817,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('เกิดข้อผิดพลาดในการปรับสถานะโต๊ะ')),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('เกิดข้อผิดพลาด: $e')));
     }
   }
 
@@ -891,23 +850,13 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                         children: [
                           const Icon(Icons.event_available, color: Colors.green, size: 24),
                           const SizedBox(width: 8),
-                          Text(
-                            'โต๊ะที่ว่าง (${_menuTitles[activeIndex]})',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                          ),
+                          Text('โต๊ะที่ว่าง (${_menuTitles[activeIndex]})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                         ],
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.green[50],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.green),
-                        ),
-                        child: Text(
-                          'ว่าง ${docs.length} โต๊ะ',
-                          style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
+                        decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green)),
+                        child: Text('ว่าง ${docs.length} โต๊ะ', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
                       ),
                     ],
                   ),
@@ -915,9 +864,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                   if (docs.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 24),
-                      child: Center(
-                        child: Text('ไม่มีโต๊ะว่างในขณะนี้ (เต็มทุกโต๊ะ)', style: TextStyle(fontSize: 16, color: Colors.grey)),
-                      ),
+                      child: Center(child: Text('ไม่มีโต๊ะว่างในขณะนี้ (เต็มทุกโต๊ะ)', style: TextStyle(fontSize: 16, color: Colors.grey))),
                     )
                   else
                     ConstrainedBox(
@@ -934,17 +881,10 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                             elevation: 1,
                             margin: const EdgeInsets.symmetric(vertical: 4),
                             color: Colors.green[50],
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              side: BorderSide(color: Colors.green[300]!),
-                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: Colors.green[300]!)),
                             child: ListTile(
                               dense: true,
-                              leading: const CircleAvatar(
-                                radius: 14,
-                                backgroundColor: Colors.green,
-                                child: Icon(Icons.check, color: Colors.white, size: 16),
-                              ),
+                              leading: const CircleAvatar(radius: 14, backgroundColor: Colors.green, child: Icon(Icons.check, color: Colors.white, size: 16)),
                               title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                               subtitle: Text('อัปเดตโดย: $updatedBy', style: TextStyle(color: Colors.grey[700], fontSize: 12)),
                             ),
@@ -971,15 +911,10 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       final batch = FirebaseFirestore.instance.batch();
       final now = Timestamp.now();
-      final String userDisplayName = globalUserTitle.isNotEmpty 
-          ? '$globalUserName [$globalUserTitle]' 
-          : globalUserName;
+      final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
       for (var doc in snapshot.docs) {
-        batch.update(doc.reference, {
-          'lastUpdated': now,
-          'updatedBy': userDisplayName,
-        });
+        batch.update(doc.reference, {'lastUpdated': now, 'updatedBy': userDisplayName});
       }
 
       await batch.commit();
@@ -994,11 +929,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('เกิดข้อผิดพลาดในการอัปเดตข้อมูล')),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('เกิดข้อผิดพลาด: $e')));
     }
   }
 
@@ -1016,19 +947,13 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
             autofocus: true,
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey, fontSize: 16)),
-            ),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey, fontSize: 16))),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
               onPressed: () async {
                 final String tableName = nameController.text.trim();
                 if (tableName.isNotEmpty) {
-                  final String userDisplayName = globalUserTitle.isNotEmpty 
-                      ? '$globalUserName [$globalUserTitle]' 
-                      : globalUserName;
-
+                  final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
                   await FirebaseFirestore.instance.collection(_collections[activeIndex]).add({
                     'name': tableName,
                     'isAvailable': true,
@@ -1058,10 +983,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final String userDisplayName = globalUserTitle.isNotEmpty 
-        ? '$globalUserName\n[$globalUserTitle]' 
-        : globalUserName;
-
+    final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName\n[$globalUserTitle]' : globalUserName;
     bool isBuffActive = globalBuffX2Until != null && globalBuffX2Until!.toDate().isAfter(DateTime.now());
 
     return DefaultTabController(
@@ -1113,7 +1035,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.sync, size: 24),
-                  tooltip: 'อัปเดตเวลาทุกโต๊ะตอนนี้ (สถานะเดิม)',
+                  tooltip: 'อัปเดตเวลาทุกโต๊ะตอนนี้',
                   onPressed: () {
                     final currentTab = DefaultTabController.of(tabContext).index;
                     _updateAllTablesCurrentTime(currentTab);
@@ -1124,11 +1046,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                 indicatorColor: Colors.white,
                 labelColor: Colors.white,
                 unselectedLabelColor: Colors.white70,
-                tabs: [
-                  Tab(text: 'ชั้น 1'),
-                  Tab(text: 'ชั้น 2'),
-                  Tab(text: 'ชั้น 3'),
-                ],
+                tabs: [Tab(text: 'ชั้น 1'), Tab(text: 'ชั้น 2'), Tab(text: 'ชั้น 3')],
               ),
             ),
             drawer: Drawer(
@@ -1143,18 +1061,11 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                       children: [
                         buildUserAvatarWidget(globalUserAvatar, radius: 36, fontSize: 36, frame: globalUserFrame),
                         const SizedBox(height: 8),
-                        Text(
-                          'สวัสดี, $userDisplayName', 
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)
-                        ),
+                        Text('สวัสดี, $userDisplayName', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 12),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1175,14 +1086,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.amberAccent),
                                 ),
                               ),
-                              const SizedBox(height: 4),
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: Text(
-                                  'อัปเดตอีก ${100 - globalUserUpdateCount} ครั้งเพื่อ Lv. Up (+20 แต้ม)',
-                                  style: const TextStyle(color: Colors.white70, fontSize: 10),
-                                ),
-                              ),
                             ],
                           ),
                         ),
@@ -1191,11 +1094,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                side: const BorderSide(color: Colors.white70),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              ),
+                              style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: const BorderSide(color: Colors.white70)),
                               onPressed: () {
                                 Navigator.pop(context);
                                 widget.onEditProfile();
@@ -1205,11 +1104,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                             ),
                             const SizedBox(width: 8),
                             OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red[200],
-                                side: BorderSide(color: Colors.red[200]!),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              ),
+                              style: OutlinedButton.styleFrom(foregroundColor: Colors.red[200], side: BorderSide(color: Colors.red[200]!)),
                               onPressed: () async {
                                 Navigator.pop(context);
                                 await FirebaseAuth.instance.signOut();
@@ -1222,27 +1117,15 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                       ],
                     ),
                   ),
-
-                  // กล่องประกาศสำคัญประจำวัน (Daily Pinned Note)
                   StreamBuilder<DocumentSnapshot>(
                     stream: FirebaseFirestore.instance.collection('app_settings').doc('daily_note').snapshots(),
                     builder: (context, snapshot) {
                       String message = 'ยังไม่มีประกาศสำคัญประจำวันนี้';
                       String updatedBy = '';
-                      String timeStr = '';
-
                       if (snapshot.hasData && snapshot.data!.exists) {
                         final data = snapshot.data!.data() as Map<String, dynamic>;
                         message = data['message'] ?? message;
-                        if (message.isEmpty) message = 'ยังไม่มีประกาศสำคัญประจำวันนี้';
                         updatedBy = data['updatedBy'] ?? '';
-                        final Timestamp? ts = data['updatedAt'];
-                        if (ts != null) {
-                          final dt = ts.toDate();
-                          final h = dt.hour.toString().padLeft(2, '0');
-                          final m = dt.minute.toString().padLeft(2, '0');
-                          timeStr = '$h:$m น.';
-                        }
                       }
 
                       return Padding(
@@ -1250,10 +1133,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                         child: Card(
                           elevation: 2,
                           color: Colors.amber[50],
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.amber[400]!, width: 1.2),
-                          ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.amber[400]!, width: 1.2)),
                           child: Padding(
                             padding: const EdgeInsets.all(12.0),
                             child: Column(
@@ -1266,34 +1146,18 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                                       children: [
                                         Icon(Icons.push_pin, color: Colors.amber[900], size: 20),
                                         const SizedBox(width: 6),
-                                        Text(
-                                          'ประกาศสำคัญประจำวัน',
-                                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.amber[900]),
-                                        ),
+                                        Text('ประกาศประจำวัน', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.amber[900])),
                                       ],
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.edit_note, size: 22),
                                       color: Colors.blue[900],
-                                      tooltip: 'แก้ไขประกาศ',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
                                       onPressed: () => _showEditDailyNoteDialog(context, message == 'ยังไม่มีประกาศสำคัญประจำวันนี้' ? '' : message),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  message,
-                                  style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.3),
-                                ),
-                                if (updatedBy.isNotEmpty) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'โดย: $updatedBy ($timeStr)',
-                                    style: TextStyle(fontSize: 10, color: Colors.grey[700], fontStyle: FontStyle.italic),
-                                  ),
-                                ],
+                                Text(message, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                                if (updatedBy.isNotEmpty) Text('โดย: $updatedBy', style: TextStyle(fontSize: 10, color: Colors.grey[700], fontStyle: FontStyle.italic)),
                               ],
                             ),
                           ),
@@ -1301,8 +1165,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                       );
                     },
                   ),
-
-                  // แถบค้นหาและตัวกรองเฉพาะโต๊ะว่าง
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12.0),
                     child: Column(
@@ -1313,77 +1175,36 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                             hintText: 'ค้นหาชื่อโต๊ะ...',
                             prefixIcon: const Icon(Icons.search, size: 20),
                             suffixIcon: _searchQuery.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear, size: 18),
-                                    onPressed: () {
-                                      setState(() {
-                                        _searchController.clear();
-                                        _searchQuery = '';
-                                      });
-                                    },
-                                  )
+                                ? IconButton(icon: const Icon(Icons.clear, size: 18), onPressed: () => setState(() { _searchController.clear(); _searchQuery = ''; }))
                                 : null,
                             isDense: true,
                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                          onChanged: (val) {
-                            setState(() {
-                              _searchQuery = val.trim();
-                            });
-                          },
+                          onChanged: (val) => setState(() => _searchQuery = val.trim()),
                         ),
-                        const SizedBox(height: 6),
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
                           dense: true,
                           title: const Text('แสดงเฉพาะโต๊ะว่าง', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           value: _onlyAvailable,
                           activeColor: Colors.blue[900],
-                          onChanged: (val) {
-                            setState(() {
-                              _onlyAvailable = val;
-                            });
-                          },
+                          onChanged: (val) => setState(() => _onlyAvailable = val),
                         ),
                       ],
                     ),
                   ),
-                  const Divider(height: 24),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Text('ระบบจัดการผังโต๊ะ StarSister Tables', style: TextStyle(color: Colors.grey, fontSize: 13)),
-                  ),
-                  const SizedBox(height: 20),
                 ],
               ),
             ),
             body: TabBarView(
               children: [
-                TableGrid(
-                  key: ValueKey('tables_f1_${_onlyAvailable}_$_searchQuery'),
-                  collectionName: 'tables_f1',
-                  onlyAvailable: _onlyAvailable,
-                  searchQuery: _searchQuery,
-                ),
-                TableGrid(
-                  key: ValueKey('tables_f2_${_onlyAvailable}_$_searchQuery'),
-                  collectionName: 'tables_f2',
-                  onlyAvailable: _onlyAvailable,
-                  searchQuery: _searchQuery,
-                ),
-                TableGrid(
-                  key: ValueKey('tables_f3_${_onlyAvailable}_$_searchQuery'),
-                  collectionName: 'tables_f3',
-                  onlyAvailable: _onlyAvailable,
-                  searchQuery: _searchQuery,
-                ),
+                TableGrid(collectionName: 'tables_f1', onlyAvailable: _onlyAvailable, searchQuery: _searchQuery),
+                TableGrid(collectionName: 'tables_f2', onlyAvailable: _onlyAvailable, searchQuery: _searchQuery),
+                TableGrid(collectionName: 'tables_f3', onlyAvailable: _onlyAvailable, searchQuery: _searchQuery),
               ],
             ),
             floatingActionButton: FloatingActionButton(
-              onPressed: () {
-                final int currentTabIndex = DefaultTabController.of(tabContext).index;
-                _showAddTableDialog(context, currentTabIndex);
-              },
+              onPressed: () => _showAddTableDialog(context, DefaultTabController.of(tabContext).index),
               backgroundColor: Colors.blue[900],
               foregroundColor: Colors.white,
               child: const Icon(Icons.add, size: 28),
@@ -1403,12 +1224,7 @@ class TableGrid extends StatelessWidget {
   final bool onlyAvailable;
   final String searchQuery;
 
-  const TableGrid({
-    super.key,
-    required this.collectionName,
-    this.onlyAvailable = false,
-    this.searchQuery = '',
-  });
+  const TableGrid({super.key, required this.collectionName, this.onlyAvailable = false, this.searchQuery = ''});
 
   void _showDeleteDialog(BuildContext context, String docId, String tableName, CollectionReference ref) {
     showDialog(
@@ -1416,22 +1232,23 @@ class TableGrid extends StatelessWidget {
       builder: (context) {
         return AlertDialog(
           title: Text('ลบ "$tableName" ?', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          content: const Text('คุณต้องการลบโต๊ะนี้ออกจากระบบใช่หรือไม่?', style: TextStyle(fontSize: 16)),
+          content: const Text('คุณต้องการลบโต๊ะนี้ออกจากระบบใช่หรือไม่?'),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey, fontSize: 16)),
-            ),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey))),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () async {
-                await ref.doc(docId).delete();
-                if (context.mounted) {
-                  await registerUserUpdateAction(context);
-                  Navigator.pop(context);
+                try {
+                  await ref.doc(docId).delete();
+                  if (context.mounted) {
+                    await registerUserUpdateAction(context);
+                    Navigator.pop(context);
+                  }
+                } catch (e) {
+                  debugPrint('Delete error: $e');
                 }
               },
-              child: const Text('ลบโต๊ะ', style: TextStyle(color: Colors.white, fontSize: 16)),
+              child: const Text('ลบโต๊ะ', style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -1466,29 +1283,11 @@ class TableGrid extends StatelessWidget {
 
         Widget content;
         if (collectionName == 'tables_f1') {
-          content = CustomFloorPlanF1(
-            docs: docs,
-            collectionName: collectionName,
-            onlyAvailable: onlyAvailable,
-            searchQuery: searchQuery,
-            onDelete: (docId, name) => _showDeleteDialog(context, docId, name, tablesRef),
-          );
+          content = CustomFloorPlanF1(docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: (docId, name) => _showDeleteDialog(context, docId, name, tablesRef));
         } else if (collectionName == 'tables_f2') {
-          content = CustomFloorPlanF2(
-            docs: docs,
-            collectionName: collectionName,
-            onlyAvailable: onlyAvailable,
-            searchQuery: searchQuery,
-            onDelete: (docId, name) => _showDeleteDialog(context, docId, name, tablesRef),
-          );
+          content = CustomFloorPlanF2(docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: (docId, name) => _showDeleteDialog(context, docId, name, tablesRef));
         } else if (collectionName == 'tables_f3') {
-          content = CustomFloorPlanF3(
-            docs: docs,
-            collectionName: collectionName,
-            onlyAvailable: onlyAvailable,
-            searchQuery: searchQuery,
-            onDelete: (docId, name) => _showDeleteDialog(context, docId, name, tablesRef),
-          );
+          content = CustomFloorPlanF3(docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: (docId, name) => _showDeleteDialog(context, docId, name, tablesRef));
         } else {
           content = const Center(child: Text('ไม่มีข้อมูลแผนผัง'));
         }
@@ -1527,22 +1326,11 @@ class FloorPlanCard extends StatelessWidget {
     required this.onDelete,
   });
 
-  bool get _isMergeableTable {
-    return collectionName == 'tables_f1' &&
-        (expectedName == 'โต๊ะ 1' ||
-            expectedName == 'โต๊ะ 2' ||
-            expectedName == 'โต๊ะ 3' ||
-            expectedName == 'โต๊ะ 4' ||
-            expectedName == 'โต๊ะ 5');
-  }
-
-  bool get _hasQueueSystem {
-    return expectedName.contains('พูล') || expectedName == 'ห้องกระจก';
-  }
+  bool get _isMergeableTable => collectionName == 'tables_f1' && (expectedName.startsWith('โต๊ะ '));
+  bool get _hasQueueSystem => expectedName.contains('พูล') || expectedName == 'ห้องกระจก';
 
   void _showMergeDialog(BuildContext context, String currentDocId, String currentName) {
     const mergeableNames = ['โต๊ะ 1', 'โต๊ะ 2', 'โต๊ะ 3', 'โต๊ะ 4', 'โต๊ะ 5'];
-    
     final otherAvailableTables = <Map<String, dynamic>>[];
     for (var doc in docs) {
       final data = doc.data() as Map<String, dynamic>;
@@ -1560,56 +1348,29 @@ class FloorPlanCard extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Row(
-                children: [
-                  const Icon(Icons.link, color: Colors.blue),
-                  const SizedBox(width: 8),
-                  Text('รวมโต๊ะกับ $currentName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                ],
-              ),
+              title: Text('รวมโต๊ะกับ $currentName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               content: SizedBox(
                 width: double.maxFinite,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('เลือกโต๊ะที่ต้องการนำมารวมกัน:', style: TextStyle(fontSize: 14)),
-                    const SizedBox(height: 12),
-                    if (otherAvailableTables.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 16),
-                        child: Center(child: Text('ไม่มีโต๊ะ 1-5 อื่นที่พร้อมรวมในขณะนี้', style: TextStyle(color: Colors.grey))),
-                      )
-                    else
-                      ...otherAvailableTables.map((tbl) {
-                        final docId = tbl['docId'] as String;
-                        final name = tbl['name'] as String;
-                        final isChecked = selectedDocIds.contains(docId);
-
-                        return CheckboxListTile(
-                          dense: true,
-                          title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          value: isChecked,
-                          activeColor: Colors.blue[900],
-                          onChanged: (val) {
-                            setDialogState(() {
-                              if (val == true) {
-                                selectedDocIds.add(docId);
-                              } else {
-                                selectedDocIds.remove(docId);
-                              }
-                            });
-                          },
-                        );
-                      }),
-                  ],
+                  children: otherAvailableTables.map((tbl) {
+                    final docId = tbl['docId'] as String;
+                    final name = tbl['name'] as String;
+                    return CheckboxListTile(
+                      dense: true,
+                      title: Text(name),
+                      value: selectedDocIds.contains(docId),
+                      onChanged: (val) {
+                        setDialogState(() {
+                          val == true ? selectedDocIds.add(docId) : selectedDocIds.remove(docId);
+                        });
+                      },
+                    );
+                  }).toList(),
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
-                ),
+                TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('ยกเลิก')),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
                   onPressed: selectedDocIds.isEmpty
@@ -1620,39 +1381,28 @@ class FloorPlanCard extends StatelessWidget {
                           final allNamesInGroup = [currentName];
 
                           for (var tbl in otherAvailableTables) {
-                            if (selectedDocIds.contains(tbl['docId'])) {
-                              allNamesInGroup.add(tbl['name'] as String);
-                            }
+                            if (selectedDocIds.contains(tbl['docId'])) allNamesInGroup.add(tbl['name'] as String);
                           }
-
                           allNamesInGroup.sort();
                           final now = Timestamp.now();
-                          final String userDisplayName = globalUserTitle.isNotEmpty 
-                              ? '$globalUserName [$globalUserTitle]' 
-                              : globalUserName;
+                          final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
-                          batch.update(
-                            FirebaseFirestore.instance.collection(collectionName).doc(currentDocId),
-                            {
+                          batch.update(FirebaseFirestore.instance.collection(collectionName).doc(currentDocId), {
+                            'mergedGroupId': newGroupId,
+                            'mergedWith': allNamesInGroup,
+                            'isAvailable': false,
+                            'lastUpdated': now,
+                            'updatedBy': userDisplayName,
+                          });
+
+                          for (var docId in selectedDocIds) {
+                            batch.update(FirebaseFirestore.instance.collection(collectionName).doc(docId), {
                               'mergedGroupId': newGroupId,
                               'mergedWith': allNamesInGroup,
                               'isAvailable': false,
                               'lastUpdated': now,
                               'updatedBy': userDisplayName,
-                            },
-                          );
-
-                          for (var docId in selectedDocIds) {
-                            batch.update(
-                              FirebaseFirestore.instance.collection(collectionName).doc(docId),
-                              {
-                                'mergedGroupId': newGroupId,
-                                'mergedWith': allNamesInGroup,
-                                'isAvailable': false,
-                                'lastUpdated': now,
-                                'updatedBy': userDisplayName,
-                              },
-                            );
+                            });
                           }
 
                           await batch.commit();
@@ -1661,7 +1411,7 @@ class FloorPlanCard extends StatelessWidget {
                             Navigator.pop(dialogContext);
                           }
                         },
-                  child: const Text('ยืนยันการรวมโต๊ะ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  child: const Text('ยืนยันรวมโต๊ะ', style: TextStyle(color: Colors.white)),
                 ),
               ],
             );
@@ -1672,62 +1422,56 @@ class FloorPlanCard extends StatelessWidget {
   }
 
   Future<void> _unmergeTables(BuildContext context, String mergedGroupId) async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection(collectionName)
-        .where('mergedGroupId', isEqualTo: mergedGroupId)
-        .get();
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection(collectionName).where('mergedGroupId', isEqualTo: mergedGroupId).get();
+      if (snapshot.docs.isEmpty) return;
 
-    if (snapshot.docs.isEmpty) return;
+      final batch = FirebaseFirestore.instance.batch();
+      final now = Timestamp.now();
+      final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
-    final batch = FirebaseFirestore.instance.batch();
-    final now = Timestamp.now();
-    final String userDisplayName = globalUserTitle.isNotEmpty 
-        ? '$globalUserName [$globalUserTitle]' 
-        : globalUserName;
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'mergedGroupId': FieldValue.delete(),
+          'mergedWith': FieldValue.delete(),
+          'isAvailable': true,
+          'lastUpdated': now,
+          'updatedBy': userDisplayName,
+        });
+      }
 
-    for (var doc in snapshot.docs) {
-      batch.update(doc.reference, {
-        'mergedGroupId': FieldValue.delete(),
-        'mergedWith': FieldValue.delete(),
-        'isAvailable': true,
-        'lastUpdated': now,
-        'updatedBy': userDisplayName,
-      });
-    }
-
-    await batch.commit();
-    if (context.mounted) {
-      await registerUserUpdateAction(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✂️ แยกโต๊ะเรียบร้อยแล้ว'), backgroundColor: Colors.blue),
-      );
+      await batch.commit();
+      if (context.mounted) {
+        await registerUserUpdateAction(context);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✂️ แยกโต๊ะเรียบร้อยแล้ว'), backgroundColor: Colors.blue));
+      }
+    } catch (e) {
+      debugPrint('Unmerge error: $e');
     }
   }
 
   Future<void> _toggleMergedGroupAvailability(BuildContext context, String mergedGroupId, bool currentStatus) async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection(collectionName)
-        .where('mergedGroupId', isEqualTo: mergedGroupId)
-        .get();
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection(collectionName).where('mergedGroupId', isEqualTo: mergedGroupId).get();
+      if (snapshot.docs.isEmpty) return;
 
-    if (snapshot.docs.isEmpty) return;
+      final batch = FirebaseFirestore.instance.batch();
+      final now = Timestamp.now();
+      final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
-    final batch = FirebaseFirestore.instance.batch();
-    final now = Timestamp.now();
-    final String userDisplayName = globalUserTitle.isNotEmpty 
-        ? '$globalUserName [$globalUserTitle]' 
-        : globalUserName;
+      for (var doc in snapshot.docs) {
+        batch.update(doc.reference, {
+          'isAvailable': !currentStatus,
+          'lastUpdated': now,
+          'updatedBy': userDisplayName,
+        });
+      }
 
-    for (var doc in snapshot.docs) {
-      batch.update(doc.reference, {
-        'isAvailable': !currentStatus,
-        'lastUpdated': now,
-        'updatedBy': userDisplayName,
-      });
+      await batch.commit();
+      if (context.mounted) await registerUserUpdateAction(context);
+    } catch (e) {
+      debugPrint('Toggle error: $e');
     }
-
-    await batch.commit();
-    if (context.mounted) await registerUserUpdateAction(context);
   }
 
   void _showTableOptionsBottomSheet(BuildContext context, String docId, String tableName, String? mergedGroupId) {
@@ -1745,8 +1489,7 @@ class FloorPlanCard extends StatelessWidget {
               if (mergedGroupId != null)
                 ListTile(
                   leading: const Icon(Icons.link_off, color: Colors.orange, size: 26),
-                  title: const Text('แยกโต๊ะออกจากกลุ่ม', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  subtitle: const Text('ยกเลิกการรวมกลุ่มและเปลี่ยนเป็นโต๊ะเดี่ยว'),
+                  title: const Text('แยกโต๊ะออกจากกลุ่ม', style: TextStyle(fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(context);
                     _unmergeTables(context, mergedGroupId);
@@ -1755,8 +1498,7 @@ class FloorPlanCard extends StatelessWidget {
               else
                 ListTile(
                   leading: const Icon(Icons.link, color: Colors.blue, size: 26),
-                  title: const Text('รวมโต๊ะกับโต๊ะอื่น', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  subtitle: const Text('เชื่อมต่อกับโต๊ะ 1-5 อื่นๆ ในชั้น 1'),
+                  title: const Text('รวมโต๊ะกับโต๊ะอื่น', style: TextStyle(fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(context);
                     _showMergeDialog(context, docId, tableName);
@@ -1764,7 +1506,7 @@ class FloorPlanCard extends StatelessWidget {
                 ),
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red, size: 26),
-                title: const Text('ลบโต๊ะออกจากระบบ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
+                title: const Text('ลบโต๊ะออกจากระบบ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
                 onTap: () {
                   Navigator.pop(context);
                   onDelete(docId, tableName);
@@ -1778,10 +1520,9 @@ class FloorPlanCard extends StatelessWidget {
   }
 
   void _showQueueDialog(BuildContext context, String docId, Map<String, dynamic> data) {
-    final List<dynamic> queueList = List.from(data['waitingQueue'] ?? []);
+    final List<dynamic> queueList = (data['waitingQueue'] is List) ? List.from(data['waitingQueue']) : [];
     final nameCtrl = TextEditingController();
     final countCtrl = TextEditingController();
-    final bool isGlassRoom = expectedName == 'ห้องกระจก';
 
     showDialog(
       context: context,
@@ -1789,153 +1530,67 @@ class FloorPlanCard extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: Row(
-                children: [
-                  Icon(
-                    isGlassRoom ? Icons.meeting_room : Icons.sports_esports,
-                    color: Colors.amber[800],
-                  ),
-                  const SizedBox(width: 8),
-                  Text('คิวรอใช้งาน: $expectedName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                ],
-              ),
+              title: Text('คิวรอ: $expectedName', style: const TextStyle(fontWeight: FontWeight.bold)),
               content: SizedBox(
                 width: double.maxFinite,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey[300]!),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('➕ เพิ่มชื่อคนรอต่อคิว', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: nameCtrl,
-                              decoration: const InputDecoration(
-                                labelText: 'ชื่อผู้รอ / โน้ต',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            TextField(
-                              controller: countCtrl,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'จำนวนคน',
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
-                                onPressed: () async {
-                                  final name = nameCtrl.text.trim();
-                                  final count = int.tryParse(countCtrl.text.trim()) ?? 0;
-                                  if (name.isNotEmpty) {
-                                    final newItem = {'name': name, 'count': count};
-                                    setDialogState(() {
-                                      queueList.add(newItem);
-                                      nameCtrl.clear();
-                                      countCtrl.clear();
-                                    });
-
-                                    await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
-                                      'waitingQueue': queueList,
-                                      'lastUpdated': Timestamp.now(),
-                                    });
-                                    if (context.mounted) await registerUserUpdateAction(context);
-                                  }
-                                },
-                                icon: const Icon(Icons.add, size: 18, color: Colors.white),
-                                label: const Text('ลงชื่อต่อคิว', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('📋 รายชื่อคิวรอขณะนี้', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                          Text('${queueList.length} คิว', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber[900])),
-                        ],
-                      ),
+                      TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'ชื่อผู้รอ / โน้ต', border: OutlineInputBorder(), isDense: true)),
                       const SizedBox(height: 8),
-                      if (queueList.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          child: Center(child: Text('ไม่มีคิวรอ สามารถเข้าใช้งานได้เลย', style: TextStyle(color: Colors.grey, fontSize: 14))),
-                        )
-                      else
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: queueList.length,
-                          itemBuilder: (context, index) {
-                            final item = queueList[index] as Map<String, dynamic>;
-                            final qName = item['name'] ?? '-';
-                            final qCount = item['count'] ?? 0;
-
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 4),
-                              elevation: 1,
-                              color: index == 0 ? Colors.amber[50] : Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                side: BorderSide(color: index == 0 ? Colors.amber : Colors.grey[300]!),
-                              ),
-                              child: ListTile(
-                                dense: true,
-                                leading: CircleAvatar(
-                                  radius: 13,
-                                  backgroundColor: index == 0 ? Colors.amber[800] : Colors.blue[900],
-                                  child: Text('${index + 1}', style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.bold)),
-                                ),
-                                title: Text(qName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                subtitle: Text('$qCount คน', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.check_circle_outline, color: Colors.green, size: 22),
-                                  tooltip: 'เสร็จสิ้น / ลบคิวนี้',
-                                  onPressed: () async {
-                                    setDialogState(() {
-                                      queueList.removeAt(index);
-                                    });
-
-                                    await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
-                                      'waitingQueue': queueList,
-                                      'lastUpdated': Timestamp.now(),
-                                    });
-                                    if (context.mounted) await registerUserUpdateAction(context);
-                                  },
-                                ),
-                              ),
-                            );
+                      TextField(controller: countCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'จำนวนคน', border: OutlineInputBorder(), isDense: true)),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
+                          onPressed: () async {
+                            final name = nameCtrl.text.trim();
+                            final count = int.tryParse(countCtrl.text.trim()) ?? 0;
+                            if (name.isNotEmpty) {
+                              setDialogState(() {
+                                queueList.add({'name': name, 'count': count});
+                                nameCtrl.clear();
+                                countCtrl.clear();
+                              });
+                              await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
+                                'waitingQueue': queueList,
+                                'lastUpdated': Timestamp.now(),
+                              });
+                              if (context.mounted) await registerUserUpdateAction(context);
+                            }
                           },
+                          icon: const Icon(Icons.add, size: 18, color: Colors.white),
+                          label: const Text('ลงชื่อต่อคิว', style: TextStyle(color: Colors.white)),
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                      ...queueList.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final item = entry.value as Map<String, dynamic>;
+                        return ListTile(
+                          dense: true,
+                          title: Text(item['name'] ?? '-'),
+                          subtitle: Text('${item['count'] ?? 0} คน'),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.check_circle_outline, color: Colors.green),
+                            onPressed: () async {
+                              setDialogState(() => queueList.removeAt(index));
+                              await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
+                                'waitingQueue': queueList,
+                                'lastUpdated': Timestamp.now(),
+                              });
+                              if (context.mounted) await registerUserUpdateAction(context);
+                            },
+                          ),
+                        );
+                      }).toList(),
                     ],
                   ),
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('ปิด'),
-                ),
-              ],
+              actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('ปิด'))],
             );
           },
         );
@@ -1953,32 +1608,27 @@ class FloorPlanCard extends StatelessWidget {
       }
     }
 
-    final String userDisplayName = globalUserTitle.isNotEmpty 
-        ? '$globalUserName [$globalUserTitle]' 
-        : globalUserName;
+    final String userDisplayName = globalUserTitle.isNotEmpty ? '$globalUserName [$globalUserTitle]' : globalUserName;
 
     if (targetDoc == null) {
       return Card(
         color: Colors.grey[100],
-        elevation: 0,
-        shape: isCircle
-            ? const CircleBorder(side: BorderSide(color: Colors.grey, width: 2, style: BorderStyle.solid))
-            : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.grey, width: 2)),
         child: InkWell(
-          customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           onTap: () async {
-            await FirebaseFirestore.instance.collection(collectionName).add({
-              'name': expectedName,
-              'isAvailable': true,
-              'lastUpdated': Timestamp.now(),
-              'updatedBy': userDisplayName,
-              'waitingQueue': [],
-            });
-            if (context.mounted) await registerUserUpdateAction(context);
+            try {
+              await FirebaseFirestore.instance.collection(collectionName).add({
+                'name': expectedName,
+                'isAvailable': true,
+                'lastUpdated': Timestamp.now(),
+                'updatedBy': userDisplayName,
+                'waitingQueue': [],
+              });
+              if (context.mounted) await registerUserUpdateAction(context);
+            } catch (e) {
+              debugPrint('Create error: $e');
+            }
           },
-          child: Center(
-            child: Text('$expectedName\n(แตะเพื่อสร้าง)', textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 16)),
-          ),
+          child: Center(child: Text('$expectedName\n(แตะเพื่อสร้าง)', textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey))),
         ),
       );
     }
@@ -1989,63 +1639,46 @@ class FloorPlanCard extends StatelessWidget {
     final String updatedBy = data['updatedBy'] ?? 'ไม่ทราบชื่อ';
     final String? mergedGroupId = data['mergedGroupId'];
     final List<dynamic>? mergedWith = data['mergedWith'];
-    final List<dynamic> queueList = data['waitingQueue'] ?? [];
+    final List<dynamic> queueList = (data['waitingQueue'] is List) ? List.from(data['waitingQueue']) : [];
     final Timestamp? ts = data['lastUpdated'];
 
     if (onlyAvailable && !isAvailable) {
       return Opacity(
         opacity: 0.25,
-        child: Card(
-          color: Colors.grey[200],
-          shape: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Center(child: Text(expectedName, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))),
-        ),
-      );
-    }
-
-    if (searchQuery.isNotEmpty && !expectedName.toLowerCase().contains(searchQuery.toLowerCase())) {
-      return Opacity(
-        opacity: 0.2,
-        child: Card(
-          color: Colors.grey[200],
-          shape: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Center(child: Text(expectedName, style: const TextStyle(color: Colors.grey))),
-        ),
+        child: Card(child: Center(child: Text(expectedName, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)))),
       );
     }
 
     String timeStr = '';
     if (ts != null) {
       final dt = ts.toDate();
-      final h = dt.hour.toString().padLeft(2, '0');
-      final m = dt.minute.toString().padLeft(2, '0');
-      timeStr = ' ($h:$m น.)';
+      timeStr = ' (${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} น.)';
     }
 
     return Card(
-      elevation: mergedGroupId != null ? 6 : 4,
+      elevation: 4,
       color: isAvailable ? Colors.green[50] : Colors.red[50],
       shape: isCircle
           ? CircleBorder(side: BorderSide(color: isAvailable ? Colors.green : Colors.red, width: 2))
           : RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
-              side: BorderSide(
-                color: mergedGroupId != null ? Colors.blue[900]! : (isAvailable ? Colors.green : Colors.red),
-                width: mergedGroupId != null ? 2.5 : 2,
-              ),
+              side: BorderSide(color: mergedGroupId != null ? Colors.blue[900]! : (isAvailable ? Colors.green : Colors.red), width: 2),
             ),
       child: InkWell(
-        customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         onTap: () async {
-          if (mergedGroupId != null) {
-            await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
-          } else {
-            await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
-              'isAvailable': !isAvailable,
-              'lastUpdated': Timestamp.now(),
-              'updatedBy': userDisplayName,
-            });
-            if (context.mounted) await registerUserUpdateAction(context);
+          try {
+            if (mergedGroupId != null) {
+              await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
+            } else {
+              await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
+                'isAvailable': !isAvailable,
+                'lastUpdated': Timestamp.now(),
+                'updatedBy': userDisplayName,
+              });
+              if (context.mounted) await registerUserUpdateAction(context);
+            }
+          } catch (e) {
+            debugPrint('Update error: $e');
           }
         },
         onLongPress: () {
@@ -2058,94 +1691,34 @@ class FloorPlanCard extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: isCircle ? 16.0 : 8.0, vertical: 4.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    expectedName,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-                  ),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(expectedName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(color: isAvailable ? Colors.green : Colors.red, borderRadius: BorderRadius.circular(20)),
+                  child: Text(isAvailable ? 'ว่าง' : 'ไม่ว่าง', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                ),
+                if (mergedGroupId != null && mergedWith != null) ...[
                   const SizedBox(height: 3),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isAvailable ? Colors.green : Colors.red,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(isAvailable ? Icons.check_circle : Icons.cancel, color: Colors.white, size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          isAvailable ? 'ว่าง' : 'ไม่ว่าง',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (mergedGroupId != null && mergedWith != null) ...[
-                    const SizedBox(height: 3),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[900],
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '🔗 ${mergedWith.join("+")}',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 3),
-                  Text(
-                    'โดย: $updatedBy$timeStr',
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10.5, color: Colors.grey[800], fontStyle: FontStyle.italic),
-                  ),
+                  Text('🔗 ${mergedWith.join("+")}', style: TextStyle(color: Colors.blue[900], fontSize: 10, fontWeight: FontWeight.bold)),
                 ],
-              ),
+                const SizedBox(height: 3),
+                Text('โดย: $updatedBy$timeStr', style: TextStyle(fontSize: 10, color: Colors.grey[800], fontStyle: FontStyle.italic)),
+              ],
             ),
             if (_hasQueueSystem)
               Positioned(
                 top: 6,
                 right: 6,
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _showQueueDialog(context, docId, data),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: queueList.isNotEmpty ? Colors.amber[800] : Colors.blue[900],
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 2, offset: Offset(0, 1))],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            queueList.isNotEmpty ? Icons.people : Icons.person_add_alt_1,
-                            size: 13,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 3),
-                          Text(
-                            queueList.isNotEmpty ? '${queueList.length} คิว' : '+คิว',
-                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                    ),
+                child: InkWell(
+                  onTap: () => _showQueueDialog(context, docId, data),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(color: queueList.isNotEmpty ? Colors.amber[800] : Colors.blue[900], borderRadius: BorderRadius.circular(10)),
+                    child: Text(queueList.isNotEmpty ? '${queueList.length} คิว' : '+คิว', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ),
@@ -2164,9 +1737,7 @@ Widget _buildDoor(String label) {
   );
 }
 
-// ==========================================
 // แผนผังชั้น 1, 2, 3
-// ==========================================
 class CustomFloorPlanF1 extends StatelessWidget {
   final List<QueryDocumentSnapshot> docs;
   final String collectionName;
@@ -2174,69 +1745,45 @@ class CustomFloorPlanF1 extends StatelessWidget {
   final String searchQuery;
   final Function(String, String) onDelete;
 
-  const CustomFloorPlanF1({
-    super.key,
-    required this.docs,
-    required this.collectionName,
-    this.onlyAvailable = false,
-    this.searchQuery = '',
-    required this.onDelete,
-  });
+  const CustomFloorPlanF1({super.key, required this.docs, required this.collectionName, this.onlyAvailable = false, this.searchQuery = '', required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.only(top: 16, bottom: 80, left: 16, right: 16), 
+      padding: const EdgeInsets.all(16),
       children: [
         Align(alignment: Alignment.center, child: _buildDoor('ประตูร้าน')),
         const SizedBox(height: 16),
         Row(
-          crossAxisAlignment: CrossAxisAlignment.start, 
           children: [
             Expanded(
-              flex: 2,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SizedBox(height: 120, child: FloorPlanCard(expectedName: 'Nintendo 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 120, child: FloorPlanCard(expectedName: 'Nintendo 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 240, 
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.blue[50],
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.blue[900]!, width: 2),
-                      ),
-                      child: const Center(
-                        child: Text('บาร์น้ำ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.blue)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 120, child: FloorPlanCard(expectedName: 'เหลี่ยมขาว', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 140, child: FloorPlanCard(expectedName: 'ห้องกระจก', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'Nintendo 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'Nintendo 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  Container(height: 160, decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(16)), child: const Center(child: Text('บาร์น้ำ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)))),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'เหลี่ยมขาว', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 120, child: FloorPlanCard(expectedName: 'ห้องกระจก', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
                 ],
               ),
             ),
-            const Expanded(flex: 1, child: SizedBox()), 
+            const SizedBox(width: 16),
             Expanded(
-              flex: 2,
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 3', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 4', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-                  const SizedBox(height: 12),
-                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 5', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  SizedBox(height: 100, child: FloorPlanCard(expectedName: 'โต๊ะ 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 100, child: FloorPlanCard(expectedName: 'โต๊ะ 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 100, child: FloorPlanCard(expectedName: 'โต๊ะ 3', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 100, child: FloorPlanCard(expectedName: 'โต๊ะ 4', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+                  const SizedBox(height: 8),
+                  SizedBox(height: 100, child: FloorPlanCard(expectedName: 'โต๊ะ 5', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
                 ],
               ),
             ),
@@ -2254,33 +1801,24 @@ class CustomFloorPlanF2 extends StatelessWidget {
   final String searchQuery;
   final Function(String, String) onDelete;
 
-  const CustomFloorPlanF2({
-    super.key,
-    required this.docs,
-    required this.collectionName,
-    this.onlyAvailable = false,
-    this.searchQuery = '',
-    required this.onDelete,
-  });
+  const CustomFloorPlanF2({super.key, required this.docs, required this.collectionName, this.onlyAvailable = false, this.searchQuery = '', required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.only(top: 16, bottom: 80, left: 40, right: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
       children: [
-        SizedBox(height: 160, child: FloorPlanCard(expectedName: 'ห้อง VIP', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 12),
-        SizedBox(height: 150, child: FloorPlanCard(expectedName: 'กลมขาว 1', isCircle: true, docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 12),
-        SizedBox(height: 150, child: FloorPlanCard(expectedName: 'กลมขาว 2', isCircle: true, docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 12),
-        SizedBox(height: 120, child: FloorPlanCard(expectedName: 'เหลี่ยมดำ', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 12),
-        SizedBox(height: 120, child: FloorPlanCard(expectedName: 'ข้างห้องกระจก', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 12),
-        SizedBox(height: 160, child: FloorPlanCard(expectedName: 'ห้องกระจก', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 16),
-        Align(alignment: Alignment.bottomRight, child: _buildDoor('ประตู')),
+        SizedBox(height: 140, child: FloorPlanCard(expectedName: 'ห้อง VIP', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 10),
+        SizedBox(height: 130, child: FloorPlanCard(expectedName: 'กลมขาว 1', isCircle: true, docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 10),
+        SizedBox(height: 130, child: FloorPlanCard(expectedName: 'กลมขาว 2', isCircle: true, docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 10),
+        SizedBox(height: 110, child: FloorPlanCard(expectedName: 'เหลี่ยมดำ', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 10),
+        SizedBox(height: 110, child: FloorPlanCard(expectedName: 'ข้างห้องกระจก', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 10),
+        SizedBox(height: 140, child: FloorPlanCard(expectedName: 'ห้องกระจก', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
       ],
     );
   }
@@ -2293,39 +1831,29 @@ class CustomFloorPlanF3 extends StatelessWidget {
   final String searchQuery;
   final Function(String, String) onDelete;
 
-  const CustomFloorPlanF3({
-    super.key,
-    required this.docs,
-    required this.collectionName,
-    this.onlyAvailable = false,
-    this.searchQuery = '',
-    required this.onDelete,
-  });
+  const CustomFloorPlanF3({super.key, required this.docs, required this.collectionName, this.onlyAvailable = false, this.searchQuery = '', required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.only(top: 16, bottom: 80, left: 24, right: 24),
+      padding: const EdgeInsets.all(24),
       children: [
-        const Text('โซนพูล', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22)), 
-        const SizedBox(height: 16),
-        SizedBox(height: 140, child: FloorPlanCard(expectedName: 'พูล 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 16),
-        SizedBox(height: 140, child: FloorPlanCard(expectedName: 'พูล 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
-        const SizedBox(height: 24),
-        Align(alignment: Alignment.center, child: _buildDoor('ทีวี')),
-        const SizedBox(height: 32),
-        const Divider(thickness: 2), 
-        const SizedBox(height: 24),
-        const Text('โซนในห้อง', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22)), 
-        const SizedBox(height: 16),
+        const Text('โซนพูล', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+        const SizedBox(height: 12),
+        SizedBox(height: 120, child: FloorPlanCard(expectedName: 'พูล 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 12),
+        SizedBox(height: 120, child: FloorPlanCard(expectedName: 'พูล 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
+        const SizedBox(height: 20),
+        const Divider(),
+        const SizedBox(height: 12),
+        const Text('โซนในห้อง', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+        const SizedBox(height: 12),
         GridView.count(
           crossAxisCount: 2,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 16,
-          crossAxisSpacing: 16,
-          childAspectRatio: 1.15,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
           children: [
             FloorPlanCard(expectedName: 'ในห้อง 1', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete),
             FloorPlanCard(expectedName: 'ในห้อง 3', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete),
@@ -2333,14 +1861,11 @@ class CustomFloorPlanF3 extends StatelessWidget {
             FloorPlanCard(expectedName: 'ในห้อง 4', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete),
           ],
         ),
-        const SizedBox(height: 24),
-        Align(alignment: Alignment.center, child: _buildDoor('ประตูห้อง')),
       ],
     );
   }
 }
 
-// แสดงเวลาแบบ HH:mm น.
 class LastUpdateWidget extends StatelessWidget {
   final DateTime updateTime;
   const LastUpdateWidget({super.key, required this.updateTime});
@@ -2349,18 +1874,10 @@ class LastUpdateWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     final h = updateTime.hour.toString().padLeft(2, '0');
     final m = updateTime.minute.toString().padLeft(2, '0');
-
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), 
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.95),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
-      ),
-      child: Text(
-        'อัปเดตล่าสุด: $h:$m น.',
-        style: TextStyle(color: Colors.blue[900], fontSize: 16, fontWeight: FontWeight.bold), 
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(20)),
+      child: Text('อัปเดตล่าสุด: $h:$m น.', style: TextStyle(color: Colors.blue[900], fontSize: 15, fontWeight: FontWeight.bold)),
     );
   }
 }
@@ -2382,7 +1899,6 @@ class _WheelReward {
   final Color color;
   final String type;
   final dynamic value;
-
   const _WheelReward(this.label, this.shortText, this.color, this.type, this.value);
 }
 
@@ -2423,9 +1939,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
   void _spin() async {
     if (_isSpinning) return;
     if (globalUserScore < 25) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('คุณต้องการคะแนนอย่างน้อย 25 แต้มเพื่อหมุนวงล้อ')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ต้องการคะแนนอย่างน้อย 25 แต้ม')));
       return;
     }
 
@@ -2441,7 +1955,6 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
     final random = Random();
     final targetIndex = random.nextInt(rewards.length);
     final sectionAngle = (2 * pi) / rewards.length;
-    
     final targetSectorAngle = (3 * pi / 2) - (targetIndex * sectionAngle + sectionAngle / 2);
     final totalRotation = (5 * 2 * pi) + targetSectorAngle;
 
@@ -2463,10 +1976,14 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
         globalUserScore = finalScore;
       } else if (reward.type == 'title') {
         updateData['title'] = reward.value;
+        updateData['unlockedTitles'] = FieldValue.arrayUnion([reward.value]);
         globalUserTitle = reward.value;
+        if (!globalUnlockedTitles.contains(reward.value)) globalUnlockedTitles.add(reward.value);
       } else if (reward.type == 'frame') {
         updateData['frame'] = reward.value;
+        updateData['unlockedFrames'] = FieldValue.arrayUnion([reward.value]);
         globalUserFrame = reward.value;
+        if (!globalUnlockedFrames.contains(reward.value)) globalUnlockedFrames.add(reward.value);
       } else if (reward.type == 'buff') {
         final buffExpiry = DateTime.now().add(Duration(minutes: reward.value as int));
         final ts = Timestamp.fromDate(buffExpiry);
@@ -2474,9 +1991,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
         globalBuffX2Until = ts;
       }
 
-      if (updateData.isNotEmpty) {
-        await userDoc.update(updateData);
-      }
+      if (updateData.isNotEmpty) await userDoc.update(updateData);
 
       if (mounted) {
         setState(() {
@@ -2490,13 +2005,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: Column(
-        children: [
-          const Text('🎰 Lucky Wheel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.purple)),
-          Text('แต้มของคุณ: $globalUserScore แต้ม (ใช้ครั้งละ 25 แต้ม)', style: const TextStyle(fontSize: 13, color: Colors.grey)),
-        ],
-      ),
+      title: const Center(child: Text('🎰 Lucky Wheel', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.purple))),
       content: SizedBox(
         width: 300,
         height: 360,
@@ -2511,66 +2020,28 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                     final angle = _isSpinning ? _animation.value : _currentAngle;
                     return Transform.rotate(
                       angle: angle,
-                      child: CustomPaint(
-                        size: const Size(240, 240),
-                        painter: _WheelPainter(rewards: rewards),
-                      ),
+                      child: CustomPaint(size: const Size(240, 240), painter: _WheelPainter(rewards: rewards)),
                     );
                   },
                 ),
-                Positioned(
-                  top: 0,
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2))],
-                    ),
-                    child: const Icon(Icons.arrow_drop_down, color: Colors.redAccent, size: 40),
-                  ),
-                ),
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.stars, color: Colors.amber[700], size: 28),
-                ),
+                const Positioned(top: 0, child: Icon(Icons.arrow_drop_down, color: Colors.redAccent, size: 40)),
+                CircleAvatar(radius: 20, backgroundColor: Colors.white, child: Icon(Icons.stars, color: Colors.amber[700])),
               ],
             ),
             const SizedBox(height: 16),
             if (_resultText != null)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.purple[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.purple),
-                ),
-                child: Text(
-                  '🎉 คุณได้รับ: $_resultText',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.purple),
-                ),
-              )
+              Text('🎉 คุณได้รับ: $_resultText', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.purple))
             else
-              const Text('แตะปุ่มด้านล่างเพื่อเริ่มหมุนวงล้อ!', style: TextStyle(color: Colors.grey, fontSize: 13)),
+              const Text('ใช้ 25 แต้มต่อการหมุน', style: TextStyle(color: Colors.grey)),
           ],
         ),
       ),
-      actionsAlignment: MainAxisAlignment.spaceBetween,
       actions: [
-        TextButton(
-          onPressed: _isSpinning ? null : () => Navigator.pop(context),
-          child: const Text('ปิด', style: TextStyle(color: Colors.grey)),
-        ),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.purple[700],
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          ),
+        TextButton(onPressed: _isSpinning ? null : () => Navigator.pop(context), child: const Text('ปิด')),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.purple[700]),
           onPressed: _isSpinning ? null : _spin,
-          icon: const Icon(Icons.play_arrow, color: Colors.white),
-          label: Text(
-            _isSpinning ? 'กำลังหมุน...' : 'หมุนเลย (25 แต้ม)',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
+          child: Text(_isSpinning ? 'กำลังหมุน...' : 'หมุนเลย', style: const TextStyle(color: Colors.white)),
         ),
       ],
     );
@@ -2586,47 +2057,23 @@ class _WheelPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
     final arcAngle = (2 * pi) / rewards.length;
-
     final paint = Paint()..style = PaintingStyle.fill;
-    final borderPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..color = Colors.white
-      ..strokeWidth = 2;
+    final borderPaint = Paint()..style = PaintingStyle.stroke..color = Colors.white..strokeWidth = 2;
 
     for (int i = 0; i < rewards.length; i++) {
       paint.color = rewards[i].color;
       final startAngle = i * arcAngle;
-
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        startAngle,
-        arcAngle,
-        true,
-        paint,
-      );
-
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        startAngle,
-        arcAngle,
-        true,
-        borderPaint,
-      );
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius), startAngle, arcAngle, true, paint);
+      canvas.drawArc(Rect.fromCircle(center: center, radius: radius), startAngle, arcAngle, true, borderPaint);
 
       canvas.save();
       canvas.translate(center.dx, center.dy);
       canvas.rotate(startAngle + arcAngle / 2);
-
-      final textSpan = TextSpan(
-        text: rewards[i].shortText,
-        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-      );
       final textPainter = TextPainter(
-        text: textSpan,
+        text: TextSpan(text: rewards[i].shortText, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
         textAlign: TextAlign.center,
         textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
+      )..layout();
       textPainter.paint(canvas, Offset(radius * 0.45, -textPainter.height / 2));
       canvas.restore();
     }
@@ -2637,7 +2084,7 @@ class _WheelPainter extends CustomPainter {
 }
 
 // ==========================================
-// LeaderboardScreen (ระบบส่งหัวใจ คูลดาวน์ 1 ชั่วโมง)
+// LeaderboardScreen (ระบบสลับฉายาและกรอบ)
 // ==========================================
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -2647,42 +2094,25 @@ class LeaderboardScreen extends StatefulWidget {
 }
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-
   Future<void> _sendHeartToUser(String targetDocId, String targetUserName) async {
     if (targetDocId == globalUserId) return;
-
     final now = DateTime.now();
 
     if (globalLastHeartSent.containsKey(targetDocId)) {
       final lastTimestamp = globalLastHeartSent[targetDocId];
       if (lastTimestamp is Timestamp) {
-        final lastSentTime = lastTimestamp.toDate();
-        final difference = now.difference(lastSentTime);
-
+        final difference = now.difference(lastTimestamp.toDate());
         if (difference.inMinutes < 60) {
-          final minutesLeft = 60 - difference.inMinutes;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: Colors.grey[800],
-              content: Text('⏳ คุณกดส่งใจให้ $targetUserName ไปแล้ว (รออีก $minutesLeft นาที)'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('⏳ รออีก ${60 - difference.inMinutes} นาที')));
           return;
         }
       }
     }
 
-    final targetUserRef = FirebaseFirestore.instance.collection('users').doc(targetDocId);
-    final myUserRef = FirebaseFirestore.instance.collection('users').doc(globalUserId);
-
     try {
-      await targetUserRef.update({
-        'hearts': FieldValue.increment(1),
-      });
-
+      await FirebaseFirestore.instance.collection('users').doc(targetDocId).update({'hearts': FieldValue.increment(1)});
       final currentTimestamp = Timestamp.now();
-      await myUserRef.update({
+      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
         'score': FieldValue.increment(1),
         'lastHeartSent.$targetDocId': currentTimestamp,
       });
@@ -2693,95 +2123,52 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.pink[600],
-            content: Row(
-              children: [
-                const Icon(Icons.favorite, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('ส่งกำลังใจให้ $targetUserName แล้ว! (+1 แต้ม)'),
-              ],
-            ),
-            duration: const Duration(seconds: 2),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.pink[600], content: Text('ส่งใจให้ $targetUserName แล้ว! (+1 แต้ม)')));
       }
     } catch (e) {
-      debugPrint('Error sending heart: $e');
+      debugPrint('Error heart: $e');
     }
   }
 
-  void _openLuckyWheelDialog(int myScore) {
-    showDialog(
-      context: context,
-      builder: (context) => LuckyWheelDialog(currentScore: myScore),
-    );
-  }
+  void _claimOrEquipTitle(int currentScore, int requiredScore, String titleName) async {
+    final bool isOwned = globalUnlockedTitles.contains(titleName);
 
-  void _openChatBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-          child: const SizedBox(height: 500, child: TeamChatBottomSheet()),
-        );
-      },
-    );
-  }
-
-  void _deleteUserProfileDialog(String docId, String userName) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('ลบโปรไฟล์ "$userName" ?', style: const TextStyle(fontWeight: FontWeight.bold)),
-          content: const Text('คุณต้องการลบโปรไฟล์นี้ออกจากระบบใช่หรือไม่?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () async {
-                await FirebaseFirestore.instance.collection('users').doc(docId).delete();
-                
-                if (docId == globalUserId) {
-                  await FirebaseAuth.instance.signOut();
-                }
-
-                if (context.mounted) Navigator.pop(context);
-              },
-              child: const Text('ลบโปรไฟล์', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _claimTitle(int currentScore, int requiredScore, String titleName) async {
-    if (currentScore < requiredScore) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('คุณต้องการคะแนนอย่างน้อย $requiredScore แต้มเพื่อแลกฉายานี้ (ปัจจุบันมี $currentScore แต้ม)')),
-      );
+    if (!isOwned && currentScore < requiredScore) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ต้องการแต้มอย่างน้อย $requiredScore แต้ม')));
       return;
     }
 
-    await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
-      'title': titleName,
-    });
+    try {
+      if (!isOwned) {
+        await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+          'title': titleName,
+          'unlockedTitles': FieldValue.arrayUnion([titleName]),
+        });
+        setState(() {
+          globalUserTitle = titleName;
+          globalUnlockedTitles.add(titleName);
+        });
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(backgroundColor: Colors.green[700], content: Text('🎉 ปลดล็อกและสวมใส่ฉายา "$titleName" แล้ว!')));
+      } else {
+        // ถ้าเป็นเจ้าของอยู่แล้ว ให้สลับใส่/ถอด
+        final newTitle = (globalUserTitle == titleName) ? '' : titleName;
+        await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'title': newTitle});
+        setState(() => globalUserTitle = newTitle);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(newTitle.isEmpty ? 'ถอดฉายาแล้ว' : 'สวมใส่ฉายา "$newTitle" แล้ว')));
+      }
+    } catch (e) {
+      debugPrint('Error title: $e');
+    }
+  }
 
-    setState(() => globalUserTitle = titleName);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('🎉 ยินดีด้วย! คุณได้รับฉายา "$titleName" แล้ว!'), backgroundColor: Colors.green[700]),
-      );
+  void _equipOrUnequipFrame(String frameType) async {
+    final newFrame = (globalUserFrame == frameType) ? '' : frameType;
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'frame': newFrame});
+      setState(() => globalUserFrame = newFrame);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(newFrame.isEmpty ? 'ถอดกรอบโปรไฟล์แล้ว' : 'สวมใส่กรอบโปรไฟล์แล้ว')));
+    } catch (e) {
+      debugPrint('Error frame: $e');
     }
   }
 
@@ -2800,14 +2187,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             unselectedLabelColor: Colors.white70,
             tabs: [
               Tab(icon: Icon(Icons.emoji_events), text: 'อันดับคะแนน'),
-              Tab(icon: Icon(Icons.shopping_bag), text: 'ร้านค้า'),
+              Tab(icon: Icon(Icons.shopping_bag), text: 'ร้านค้า & คลัง'),
             ],
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance.collection('users').orderBy('score', descending: true).snapshots(),
           builder: (context, snapshot) {
-            if (snapshot.hasError) return const Center(child: Text('เกิดข้อผิดพลาดในการโหลดข้อมูล'));
+            if (snapshot.hasError) return const Center(child: Text('เกิดข้อผิดพลาด'));
             if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
 
             final users = snapshot.data!.docs;
@@ -2817,125 +2204,63 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               if (u.id == globalUserId) {
                 final d = u.data() as Map<String, dynamic>;
                 myCurrentScore = d['score'] ?? 0;
-                globalUserFrame = d['frame'] ?? '';
-                globalBuffX2Until = d['buffX2Until'];
-                globalUserHearts = d['hearts'] ?? 0;
-                globalLastHeartSent = d['lastHeartSent'] != null ? Map<String, dynamic>.from(d['lastHeartSent']) : {};
                 break;
               }
             }
 
             return TabBarView(
               children: [
-                users.isEmpty
-                    ? const Center(child: Text('ยังไม่มีข้อมูลคะแนน', style: TextStyle(fontSize: 18)))
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 80),
-                        itemCount: users.length,
-                        itemBuilder: (context, index) {
-                          final userData = users[index].data() as Map<String, dynamic>;
-                          final docId = users[index].id;
-                          final name = userData['name'] ?? 'Unknown';
-                          final avatar = userData['avatar'] ?? '🐱';
-                          final score = userData['score'] ?? 0;
-                          final level = userData['level'] ?? 1;
-                          final title = userData['title'] ?? '';
-                          final frame = userData['frame'] ?? '';
-                          final hearts = userData['hearts'] ?? 0;
-                          final isMe = docId == globalUserId;
+                // หน้ารายชื่อ Leaderboard
+                ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: users.length,
+                  itemBuilder: (context, index) {
+                    final userData = users[index].data() as Map<String, dynamic>;
+                    final docId = users[index].id;
+                    final name = userData['name'] ?? 'Unknown';
+                    final avatar = userData['avatar'] ?? '🐱';
+                    final score = userData['score'] ?? 0;
+                    final level = userData['level'] ?? 1;
+                    final title = userData['title'] ?? '';
+                    final frame = userData['frame'] ?? '';
+                    final hearts = userData['hearts'] ?? 0;
+                    final isMe = docId == globalUserId;
 
-                          return Card(
-                            elevation: 2,
-                            margin: const EdgeInsets.symmetric(vertical: 6),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            child: ListTile(
-                              leading: Stack(
-                                alignment: Alignment.bottomRight,
-                                children: [
-                                  buildUserAvatarWidget(avatar, radius: 24, fontSize: 24, frame: frame),
-                                  Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: index == 0 ? Colors.amber : (index == 1 ? Colors.grey[400] : (index == 2 ? Colors.brown[300] : Colors.blue[100])),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Text(
-                                      '${index + 1}',
-                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: index < 3 ? Colors.white : Colors.black87),
-                                    ),
-                                  ),
-                                ],
+                    return Card(
+                      elevation: 2,
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      child: ListTile(
+                        leading: buildUserAvatarWidget(avatar, radius: 22, fontSize: 22, frame: frame),
+                        title: Row(
+                          children: [
+                            Text('$name (Lv.$level)', style: const TextStyle(fontWeight: FontWeight.bold)),
+                            if (title.isNotEmpty) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(color: Colors.amber[100], borderRadius: BorderRadius.circular(6)),
+                                child: Text(title, style: TextStyle(fontSize: 10, color: Colors.amber[900], fontWeight: FontWeight.bold)),
                               ),
-                              title: Row(
-                                children: [
-                                  Expanded(child: Text('$name (Lv.$level)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
-                                  if (title.isNotEmpty)
-                                    Container(
-                                      margin: const EdgeInsets.only(left: 6),
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.amber[100],
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(color: Colors.amber[800]!, width: 0.8),
-                                      ),
-                                      child: Text(title, style: TextStyle(fontSize: 10, color: Colors.amber[900], fontWeight: FontWeight.bold)),
-                                    ),
-                                ],
-                              ),
-                              subtitle: Row(
-                                children: [
-                                  Text('$score แต้ม', style: const TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
-                                  const SizedBox(width: 8),
-                                  Text('•  ❤️ $hearts', style: const TextStyle(fontSize: 13, color: Colors.pink, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(
-                                      isMe ? Icons.favorite : Icons.favorite_border,
-                                      color: isMe ? Colors.pink[300] : Colors.pink,
-                                    ),
-                                    tooltip: isMe ? 'หัวใจที่คุณได้รับ' : 'ส่งหัวใจให้กำลังใจ (ชั่วโมงละ 1 ครั้ง)',
-                                    onPressed: isMe ? null : () => _sendHeartToUser(docId, name),
-                                  ),
-                                  PopupMenuButton<String>(
-                                    onSelected: (value) {
-                                      if (value == 'delete') {
-                                        _deleteUserProfileDialog(docId, name);
-                                      }
-                                    },
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.delete, color: Colors.red, size: 20),
-                                            SizedBox(width: 8),
-                                            Text('ลบโปรไฟล์'),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
+                            ],
+                          ],
+                        ),
+                        subtitle: Text('$score แต้ม • ❤️ $hearts', style: const TextStyle(fontSize: 12)),
+                        trailing: IconButton(
+                          icon: Icon(isMe ? Icons.favorite : Icons.favorite_border, color: Colors.pink),
+                          onPressed: isMe ? null : () => _sendHeartToUser(docId, name),
+                        ),
                       ),
+                    );
+                  },
+                ),
 
+                // หน้าร้านค้าและคลังของสะสม
                 ListView(
-                  padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 80),
+                  padding: const EdgeInsets.all(16),
                   children: [
                     Container(
                       padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.amber[50],
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.amber[300]!, width: 1.5),
-                      ),
+                      decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.amber)),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -2946,52 +2271,33 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // แบนเนอร์หมุนวงล้อ Lucky Wheel (25 แต้ม)
+                    // วงล้อเสี่ยงโชค
                     Card(
-                      elevation: 4,
+                      elevation: 3,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       child: Container(
+                        padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
+                          gradient: const LinearGradient(colors: [Color(0xFF8E2DE2), Color(0xFF4A00E0)]),
                         ),
-                        padding: const EdgeInsets.all(16),
                         child: Row(
                           children: [
-                            const CircleAvatar(
-                              radius: 28,
-                              backgroundColor: Colors.white24,
-                              child: Text('🎰', style: TextStyle(fontSize: 30)),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
+                            const Text('🎰', style: TextStyle(fontSize: 32)),
+                            const SizedBox(width: 12),
+                            const Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
-                                children: const [
-                                  Text(
-                                    'Lucky Wheel วงล้อเสี่ยงโชค',
-                                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                                  ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    'ลุ้นฉายาลับ, กรอบทอง, บัฟ x2 และแต้มสูงสุด +100 (25 แต้ม/ครั้ง)',
-                                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                                  ),
+                                children: [
+                                  Text('Lucky Wheel วงล้อเสี่ยงโชค', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                                  Text('ลุ้นฉายาลับ, กรอบ และแต้ม (25 แต้ม/ครั้ง)', style: TextStyle(color: Colors.white70, fontSize: 12)),
                                 ],
                               ),
                             ),
                             ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.amber,
-                                foregroundColor: Colors.black87,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                              ),
-                              onPressed: () => _openLuckyWheelDialog(myCurrentScore),
-                              child: const Text('หมุนเลย', style: TextStyle(fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber),
+                              onPressed: () => showDialog(context: context, builder: (context) => LuckyWheelDialog(currentScore: myCurrentScore)),
+                              child: const Text('หมุนเลย', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
                             ),
                           ],
                         ),
@@ -2999,101 +2305,28 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    const Text('🎖️ เลือกแลกฉายาประจำตัว', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    // ส่วนจัดการกรอบโปรไฟล์ที่ปลดล็อกแล้ว
+                    const Text('🖼️ กรอบโปรไฟล์ในคลัง', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        _buildFrameCard('นีออน 💎', 'neon', Colors.cyanAccent),
+                        const SizedBox(width: 12),
+                        _buildFrameCard('ทองคำ 👑', 'gold', Colors.amber),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+
+                    // ส่วนฉายา
+                    const Text('🎖️ ฉายา & คลังฉายา', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
-
-                    _buildTitleRewardItem(
-                      title: 'นักอัปเดตโต๊ะ 🥉',
-                      requiredScore: 100,
-                      currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 100, 'นักอัปเดตโต๊ะ 🥉'),
-                    ),
-                    const SizedBox(height: 10),
-                    _buildTitleRewardItem(
-                      title: 'นักอัปเดตโต๊ะจอมซน 😼',
-                      requiredScore: 300,
-                      currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 300, 'นักอัปเดตโต๊ะจอมซน 😼'),
-                    ),
-                    const SizedBox(height: 10),
-                    _buildTitleRewardItem(
-                      title: 'ยอดอัพเดตโต๊ะ 🥈',
-                      requiredScore: 500,
-                      currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 500, 'ยอดอัพเดตโต๊ะ 🥈'),
-                    ),
-                    const SizedBox(height: 10),
-                    _buildTitleRewardItem(
-                      title: 'ท่านเทพอัพเดตโต๊ะ 🥇',
-                      requiredScore: 700,
-                      currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 700, 'ท่านเทพอัพเดตโต๊ะ 🥇'),
-                    ),
-                    const SizedBox(height: 10),
-                    _buildTitleRewardItem(
-                      title: 'GMจอมขยัน 👑',
-                      requiredScore: 1000,
-                      currentScore: myCurrentScore,
-                      onClaim: () => _claimTitle(myCurrentScore, 1000, 'GMจอมขยัน 👑'),
-                    ),
-                    const SizedBox(height: 14),
-
-                    // การ์ดรางวัลพิเศษปริศนา (Coming Soon)
-                    Card(
-                      elevation: 3,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: Colors.purple[300]!, width: 1.5),
-                      ),
-                      color: Colors.purple[50],
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.purple[100],
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(Icons.card_giftcard, color: Colors.purple, size: 26),
-                                ),
-                                const SizedBox(width: 12),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'รางวัลสุดพิเศษ 🎁',
-                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.purple),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'เงื่อนไข: ??? แต้ม (เร็วๆ นี้)',
-                                      style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: Colors.purple[700],
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 1))],
-                              ),
-                              child: const Text(
-                                'Coming Soon',
-                                style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    _buildTitleItem('นักอัปเดตโต๊ะ 🥉', 100, myCurrentScore),
+                    _buildTitleItem('นักอัปเดตโต๊ะจอมซน 😼', 300, myCurrentScore),
+                    _buildTitleItem('ยอดอัพเดตโต๊ะ 🥈', 500, myCurrentScore),
+                    _buildTitleItem('ท่านเทพอัพเดตโต๊ะ 🥇', 700, myCurrentScore),
+                    _buildTitleItem('GMจอมขยัน 👑', 1000, myCurrentScore),
+                    if (globalUnlockedTitles.contains('ดวงดีจัดๆ ⭐')) _buildTitleItem('ดวงดีจัดๆ ⭐', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('นักเสี่ยงดวงแห่งปี 🎰')) _buildTitleItem('นักเสี่ยงดวงแห่งปี 🎰', 0, myCurrentScore),
                   ],
                 ),
               ],
@@ -3101,55 +2334,82 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           },
         ),
         floatingActionButton: FloatingActionButton(
-          onPressed: _openChatBottomSheet,
+          onPressed: () {
+            showModalBottomSheet(
+              context: context,
+              isScrollControlled: true,
+              shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+              builder: (context) => Padding(padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom), child: const SizedBox(height: 500, child: TeamChatBottomSheet())),
+            );
+          },
           backgroundColor: Colors.amber[700],
           foregroundColor: Colors.white,
-          child: const Icon(Icons.chat_bubble, size: 26),
+          child: const Icon(Icons.chat_bubble),
         ),
       ),
     );
   }
 
-  Widget _buildTitleRewardItem({
-    required String title,
-    required int requiredScore,
-    required int currentScore,
-    required VoidCallback onClaim,
-  }) {
+  Widget _buildFrameCard(String label, String frameType, Color frameColor) {
+    final bool isOwned = globalUnlockedFrames.contains(frameType);
+    final bool isEquipped = globalUserFrame == frameType;
+
+    return Expanded(
+      child: Card(
+        color: isEquipped ? Colors.blue[50] : Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: isEquipped ? Colors.blue[900]! : Colors.grey[300]!, width: isEquipped ? 2 : 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const SizedBox(height: 8),
+              buildUserAvatarWidget(globalUserAvatar, radius: 20, fontSize: 20, frame: isOwned ? frameType : ''),
+              const SizedBox(height: 8),
+              if (!isOwned)
+                const Text('(สุ่มได้จากวงล้อ)', style: TextStyle(fontSize: 11, color: Colors.grey))
+              else
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isEquipped ? Colors.red[400] : Colors.blue[900],
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                  onPressed: () => _equipOrUnequipFrame(frameType),
+                  child: Text(isEquipped ? 'ถอดออก' : 'เลือกใช้', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTitleItem(String title, int requiredScore, int currentScore) {
+    final bool isOwned = globalUnlockedTitles.contains(title);
     final bool isEquipped = globalUserTitle == title;
     final bool canClaim = currentScore >= requiredScore;
 
     return Card(
-      elevation: 2,
+      margin: const EdgeInsets.symmetric(vertical: 4),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(color: isEquipped ? Colors.amber[800]! : Colors.transparent, width: isEquipped ? 2 : 0),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                const SizedBox(height: 4),
-                Text('เงื่อนไข: $requiredScore แต้ม', style: const TextStyle(fontSize: 13, color: Colors.grey)),
-              ],
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isEquipped ? Colors.green[600] : (canClaim ? Colors.amber[700] : Colors.grey[400]),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              ),
-              onPressed: isEquipped ? null : onClaim,
-              child: Text(
-                isEquipped ? 'ใช้งานอยู่' : 'แลกฉายา',
-                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
+      child: ListTile(
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text(isOwned ? 'ปลดล็อกแล้ว (อยู่ในคลัง)' : 'เงื่อนไข: $requiredScore แต้ม', style: TextStyle(fontSize: 12, color: isOwned ? Colors.green[700] : Colors.grey)),
+        trailing: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isEquipped ? Colors.green[600] : (isOwned ? Colors.blue[900] : (canClaim ? Colors.amber[700] : Colors.grey[400])),
+          ),
+          onPressed: (!isOwned && !canClaim) ? null : () => _claimOrEquipTitle(currentScore, requiredScore, title),
+          child: Text(
+            isEquipped ? 'ใช้งานอยู่ (แตะเพื่อถอด)' : (isOwned ? 'เลือกใช้' : 'แลกฉายา'),
+            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
         ),
       ),
     );
@@ -3190,10 +2450,7 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: Colors.amber[700],
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          ),
+          decoration: BoxDecoration(color: Colors.amber[700], borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -3204,10 +2461,7 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
                   Text('ห้องแชททีม 💬', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 ],
               ),
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-              ),
+              IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
             ],
           ),
         ),
@@ -3215,14 +2469,10 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
           child: StreamBuilder<QuerySnapshot>(
             stream: FirebaseFirestore.instance.collection('chat_messages').orderBy('timestamp', descending: true).snapshots(),
             builder: (context, snapshot) {
-              if (snapshot.hasError) return const Center(child: Text('เกิดข้อผิดพลาดในการโหลดข้อความ'));
+              if (snapshot.hasError) return const Center(child: Text('เกิดข้อผิดพลาด'));
               if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
 
               final docs = snapshot.data!.docs;
-              if (docs.isEmpty) {
-                return const Center(child: Text('ยังไม่มีข้อความ เริ่มคุยกันเลย!', style: TextStyle(color: Colors.grey, fontSize: 16)));
-              }
-
               return ListView.builder(
                 reverse: true,
                 padding: const EdgeInsets.all(12),
@@ -3234,15 +2484,6 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
                   final senderAvatar = data['senderAvatar'] ?? '🐱';
                   final senderTitle = data['senderTitle'] ?? '';
                   final message = data['message'] ?? '';
-                  final Timestamp? ts = data['timestamp'];
-
-                  String timeStr = '';
-                  if (ts != null) {
-                    final dt = ts.toDate();
-                    final h = dt.hour.toString().padLeft(2, '0');
-                    final m = dt.minute.toString().padLeft(2, '0');
-                    timeStr = '$h:$m น.';
-                  }
 
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
@@ -3258,37 +2499,18 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
                           child: Column(
                             crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                             children: [
-                              if (!isMe)
-                                Text(
-                                  senderTitle.isNotEmpty ? '$senderName [$senderTitle]' : senderName,
-                                  style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold),
-                                ),
-                              const SizedBox(height: 2),
+                              if (!isMe) Text(senderTitle.isNotEmpty ? '$senderName [$senderTitle]' : senderName, style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold)),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                 decoration: BoxDecoration(
                                   color: isMe ? Colors.amber[700] : Colors.grey[200],
-                                  borderRadius: BorderRadius.only(
-                                    topLeft: const Radius.circular(16),
-                                    topRight: const Radius.circular(16),
-                                    bottomLeft: Radius.circular(isMe ? 16 : 0),
-                                    bottomRight: Radius.circular(isMe ? 0 : 16),
-                                  ),
+                                  borderRadius: BorderRadius.circular(16),
                                 ),
-                                child: Text(
-                                  message,
-                                  style: TextStyle(color: isMe ? Colors.white : Colors.black87, fontSize: 14),
-                                ),
+                                child: Text(message, style: TextStyle(color: isMe ? Colors.white : Colors.black87)),
                               ),
-                              const SizedBox(height: 2),
-                              Text(timeStr, style: const TextStyle(fontSize: 10, color: Colors.grey)),
                             ],
                           ),
                         ),
-                        if (isMe) ...[
-                          const SizedBox(width: 8),
-                          buildUserAvatarWidget(senderAvatar, radius: 16, fontSize: 16, frame: globalUserFrame),
-                        ],
                       ],
                     ),
                   );
@@ -3298,19 +2520,15 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
           ),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: const Offset(0, -2))],
-          ),
+          padding: const EdgeInsets.all(8),
+          color: Colors.white,
           child: Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _msgController,
                   decoration: InputDecoration(
-                    hintText: 'พิมพ์ข้อความสั้นๆ...',
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    hintText: 'พิมพ์ข้อความ...',
                     filled: true,
                     fillColor: Colors.grey[100],
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
@@ -3321,10 +2539,7 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
               const SizedBox(width: 8),
               CircleAvatar(
                 backgroundColor: Colors.amber[700],
-                child: IconButton(
-                  icon: const Icon(Icons.send, color: Colors.white, size: 18),
-                  onPressed: _sendMessage,
-                ),
+                child: IconButton(icon: const Icon(Icons.send, color: Colors.white, size: 18), onPressed: _sendMessage),
               ),
             ],
           ),
