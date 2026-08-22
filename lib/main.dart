@@ -78,7 +78,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Widget สำหรับแสดงผลรูปโปรไฟล์ (รองรับ นีออน / ทอง / สีรุ้ง / เปลวไฟ / น้ำแข็ง)
+// Widget สำหรับแสดงผลรูปโปรไฟล์
 Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize = 24, String frame = ''}) {
   bool isUrl = avatar.startsWith('http://') || avatar.startsWith('https://');
   
@@ -147,49 +147,66 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
   return circle;
 }
 
-// ระบบบันทึกคลิก: ครบ 100 คลิก เลเวลอัปและรับโบนัส +50 แต้ม (บัฟ x2 ได้ +100 แต้ม) พร้อมบันทึก Daily Quest 1
+// บันทึกคลิก: เลเวลอัป + นับเควส 1
 Future<void> registerUserUpdateAction(BuildContext? context) async {
   final user = FirebaseAuth.instance.currentUser;
   final currentUid = user?.uid ?? globalUserId;
-  if (currentUid.isEmpty) {
-    debugPrint('⚠️ ไม่พบ User ID สำหรับบันทึกแต้ม');
-    return;
-  }
+  if (currentUid.isEmpty) return;
   globalUserId = currentUid;
 
   final userDocRef = FirebaseFirestore.instance.collection('users').doc(currentUid);
   final today = getTodayKey();
 
   try {
+    final userSnap = await userDocRef.get();
+    final userData = userSnap.data() ?? {};
+
     bool isBuffActive = globalBuffX2Until != null && globalBuffX2Until!.toDate().isAfter(DateTime.now());
 
-    globalUserUpdateCount += 1;
+    int curUpdateCount = (userData['updateCount'] is num) ? (userData['updateCount'] as num).toInt() : 0;
+    int curLevel = (userData['level'] is num) ? (userData['level'] as num).toInt() : 1;
+    int curScore = (userData['score'] is num) ? (userData['score'] as num).toInt() : 0;
 
+    curUpdateCount += 1;
     int gainedLevels = 0;
     int bonusScore = 0;
 
-    if (globalUserUpdateCount >= 100) {
-      gainedLevels = globalUserUpdateCount ~/ 100;
-      globalUserUpdateCount = globalUserUpdateCount % 100;
-      globalUserLevel += gainedLevels;
+    if (curUpdateCount >= 100) {
+      gainedLevels = curUpdateCount ~/ 100;
+      curUpdateCount = curUpdateCount % 100;
+      curLevel += gainedLevels;
 
       int baseBonus = 50;
       bonusScore = isBuffActive ? (baseBonus * 2 * gainedLevels) : (baseBonus * gainedLevels);
-      globalUserScore += bonusScore;
+      curScore += bonusScore;
     }
 
-    Map<String, dynamic> updateData = {
-      'updateCount': FieldValue.increment(1),
-      'dailyQuests.$today.tableUpdates': FieldValue.increment(1),
+    Map<String, dynamic> allDailyQuests = {};
+    if (userData['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(userData['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[today] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[today]);
+    }
+
+    int currentTableUpdates = (todayQuest['tableUpdates'] is num) ? (todayQuest['tableUpdates'] as num).toInt() : 0;
+    todayQuest['tableUpdates'] = currentTableUpdates + 1;
+    allDailyQuests[today] = todayQuest;
+
+    Map<String, dynamic> finalUpdate = {
+      'updateCount': curUpdateCount,
+      'level': curLevel,
+      'score': curScore,
+      'dailyQuests': allDailyQuests,
     };
 
-    if (gainedLevels > 0) {
-      updateData['level'] = FieldValue.increment(gainedLevels);
-      updateData['score'] = FieldValue.increment(bonusScore);
-      updateData['updateCount'] = globalUserUpdateCount;
-    }
+    await userDocRef.set(finalUpdate, SetOptions(merge: true));
 
-    await userDocRef.set(updateData, SetOptions(merge: true));
+    globalUserUpdateCount = curUpdateCount;
+    globalUserLevel = curLevel;
+    globalUserScore = curScore;
 
     if (gainedLevels > 0 && context != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -214,7 +231,7 @@ Future<void> registerUserUpdateAction(BuildContext? context) async {
       );
     }
   } catch (e) {
-    debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล: $e');
+    debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล/เควส: $e');
   }
 }
 
@@ -864,7 +881,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ==========================================
-// DailyQuestsScreen (กล่องสุ่ม 10-60 แต้ม)
+// DailyQuestsScreen
 // ==========================================
 class DailyQuestsScreen extends StatefulWidget {
   const DailyQuestsScreen({super.key});
@@ -897,39 +914,49 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
       streakCount = 1;
     }
 
-    // ปรับกล่องสุ่มแต้มล็อกอินเป็น 10 ถึง 60 แต้ม
+    // กล่องสุ่มแต้ม 10 ถึง 60 แต้ม
     final random = Random();
-    final int mysteryPoints = 10 + random.nextInt(51); // 10 ถึง 60 แต้ม
+    final int mysteryPoints = 10 + random.nextInt(51); 
     int totalGainedPoints = mysteryPoints;
 
     if (streakCount == 7) {
       totalGainedPoints += 100;
     }
 
-    final batch = FirebaseFirestore.instance.batch();
     final userRef = FirebaseFirestore.instance.collection('users').doc(globalUserId);
+    final userSnap = await userRef.get();
+    final myData = userSnap.data() ?? {};
 
-    batch.update(userRef, {
-      'streakCount': streakCount,
-      'lastCheckInDate': todayKey,
-      'score': FieldValue.increment(totalGainedPoints),
-    });
+    Map<String, dynamic> allDailyQuests = {};
+    if (myData['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(myData['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[todayKey] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[todayKey]);
+    }
 
     final firstCheckInDoc = await FirebaseFirestore.instance.collection('app_settings').doc('first_checkin_$todayKey').get();
     bool isFirstCheckInToday = false;
     if (!firstCheckInDoc.exists) {
       isFirstCheckInToday = true;
-      batch.set(FirebaseFirestore.instance.collection('app_settings').doc('first_checkin_$todayKey'), {
+      await FirebaseFirestore.instance.collection('app_settings').doc('first_checkin_$todayKey').set({
         'userId': globalUserId,
         'userName': globalUserName,
         'time': Timestamp.now(),
       });
-      batch.set(userRef, {
-        'dailyQuests.$todayKey.isFirstCheckIn': true,
-      }, SetOptions(merge: true));
+      todayQuest['isFirstCheckIn'] = true;
     }
 
-    await batch.commit();
+    allDailyQuests[todayKey] = todayQuest;
+
+    await userRef.set({
+      'streakCount': streakCount,
+      'lastCheckInDate': todayKey,
+      'score': FieldValue.increment(totalGainedPoints),
+      'dailyQuests': allDailyQuests,
+    }, SetOptions(merge: true));
 
     if (mounted) {
       showDialog(
@@ -983,10 +1010,25 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
 
   Future<void> _claimQuestReward(String questKey, int rewardScore) async {
     final userRef = FirebaseFirestore.instance.collection('users').doc(globalUserId);
+    final userSnap = await userRef.get();
+    final myData = userSnap.data() ?? {};
+
+    Map<String, dynamic> allDailyQuests = {};
+    if (myData['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(myData['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[todayKey] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[todayKey]);
+    }
+
+    todayQuest['claimed_$questKey'] = true;
+    allDailyQuests[todayKey] = todayQuest;
 
     await userRef.set({
       'score': FieldValue.increment(rewardScore),
-      'dailyQuests.$todayKey.claimed_$questKey': true,
+      'dailyQuests': allDailyQuests,
     }, SetOptions(merge: true));
 
     if (mounted) {
@@ -1020,12 +1062,14 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
           final int streakCount = (userData['streakCount'] is num) ? (userData['streakCount'] as num).toInt() : 0;
           final isCheckedInToday = lastCheckInDate == todayKey;
 
-          final dailyQuestsMap = (userData['dailyQuests'] != null && userData['dailyQuests'][todayKey] != null)
-              ? Map<String, dynamic>.from(userData['dailyQuests'][todayKey])
-              : <String, dynamic>{};
+          final rawDaily = userData['dailyQuests'];
+          Map<String, dynamic> dailyQuestsMap = {};
+          if (rawDaily is Map && rawDaily[todayKey] is Map) {
+            dailyQuestsMap = Map<String, dynamic>.from(rawDaily[todayKey]);
+          }
 
           final int tableUpdates = (dailyQuestsMap['tableUpdates'] is num) ? (dailyQuestsMap['tableUpdates'] as num).toInt() : 0;
-          final List<dynamic> heartSentUsers = List.from(dailyQuestsMap['heartSentUsers'] ?? []);
+          final List<dynamic> heartSentUsers = (dailyQuestsMap['heartSentUsers'] is List) ? List.from(dailyQuestsMap['heartSentUsers']) : [];
           final int heartSentTotal = (dailyQuestsMap['heartSentTotal'] is num) ? (dailyQuestsMap['heartSentTotal'] as num).toInt() : 0;
           final bool isFirstCheckIn = dailyQuestsMap['isFirstCheckIn'] == true;
 
@@ -1275,7 +1319,7 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
 }
 
 // ==========================================
-// TableStatusScreen (พร้อม Mini Banner ประกาศข้างปุ่มดูโต๊ะว่างบน AppBar)
+// TableStatusScreen
 // ==========================================
 class TableStatusScreen extends StatefulWidget {
   final VoidCallback onEditProfile;
@@ -1419,7 +1463,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       await batch.commit();
       if (mounted) {
-        registerUserUpdateAction(context);
+        await registerUserUpdateAction(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: targetStatus ? Colors.green[800] : Colors.red[800],
@@ -1559,7 +1603,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       await batch.commit();
       if (mounted) {
-        registerUserUpdateAction(context);
+        await registerUserUpdateAction(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.blue[900],
@@ -1612,7 +1656,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                     'waitingQueue': [],
                   });
                   if (context.mounted) {
-                    registerUserUpdateAction(context);
+                    await registerUserUpdateAction(context);
                     Navigator.pop(context);
                   }
                 }
@@ -1643,7 +1687,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
             appBar: AppBar(
               title: Row(
                 children: [
-                  // 1. ส่วนแสดงผลชื่อแอปและสถิติส่วนตัว (เลเวล, หลอดคลิก, แต้ม, หัวใจ)
                   StreamBuilder<DocumentSnapshot>(
                     stream: FirebaseFirestore.instance.collection('users').doc(currentUid).snapshots(),
                     builder: (context, snapshot) {
@@ -1691,7 +1734,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
                   const SizedBox(width: 8),
 
-                  // 2. Mini Banner ประกาศสำคัญประจำวัน (วางข้างปุ่มดูโต๊ะว่างบน AppBar)
                   Expanded(
                     child: StreamBuilder<DocumentSnapshot>(
                       stream: FirebaseFirestore.instance.collection('app_settings').doc('daily_note').snapshots(),
@@ -1892,7 +1934,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                     },
                   ),
 
-                  // เมนูเปิดหน้า Daily Quests & Mystery Box
                   ListTile(
                     leading: const Icon(Icons.card_giftcard, color: Colors.amber, size: 28),
                     title: const Text('ภารกิจ & กล่องสุ่มประจำวัน 🎁', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
@@ -2033,7 +2074,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                   ),
                   const Divider(height: 24),
                   const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
                     child: Text('ระบบจัดการผังโต๊ะ StarSister Tables', style: TextStyle(color: Colors.grey, fontSize: 13)),
                   ),
                   const SizedBox(height: 20),
@@ -2108,7 +2149,7 @@ class TableGrid extends StatelessWidget {
                 try {
                   await ref.doc(docId).delete();
                   if (context.mounted) {
-                    registerUserUpdateAction(context);
+                    await registerUserUpdateAction(context);
                     Navigator.pop(context);
                   }
                 } catch (e) {
@@ -2341,7 +2382,7 @@ class FloorPlanCard extends StatelessWidget {
 
                           await batch.commit();
                           if (context.mounted) {
-                            registerUserUpdateAction(context);
+                            await registerUserUpdateAction(context);
                             Navigator.pop(dialogContext);
                           }
                         },
@@ -2382,7 +2423,7 @@ class FloorPlanCard extends StatelessWidget {
 
       await batch.commit();
       if (context.mounted) {
-        registerUserUpdateAction(context);
+        await registerUserUpdateAction(context);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✂️ แยกโต๊ะเรียบร้อยแล้ว'), backgroundColor: Colors.blue),
         );
@@ -2416,7 +2457,7 @@ class FloorPlanCard extends StatelessWidget {
       }
 
       await batch.commit();
-      if (context.mounted) registerUserUpdateAction(context);
+      if (context.mounted) await registerUserUpdateAction(context);
     } catch (e) {
       debugPrint('Toggle error: $e');
     }
@@ -2548,7 +2589,7 @@ class FloorPlanCard extends StatelessWidget {
                                       'waitingQueue': queueList,
                                       'lastUpdated': Timestamp.now(),
                                     });
-                                    if (context.mounted) registerUserUpdateAction(context);
+                                    if (context.mounted) await registerUserUpdateAction(context);
                                   }
                                 },
                                 icon: const Icon(Icons.add, size: 18, color: Colors.white),
@@ -2611,7 +2652,7 @@ class FloorPlanCard extends StatelessWidget {
                                       'waitingQueue': queueList,
                                       'lastUpdated': Timestamp.now(),
                                     });
-                                    if (context.mounted) registerUserUpdateAction(context);
+                                    if (context.mounted) await registerUserUpdateAction(context);
                                   },
                                 ),
                               ),
@@ -2659,7 +2700,7 @@ class FloorPlanCard extends StatelessWidget {
         child: InkWell(
           customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           onTap: () async {
-            registerUserUpdateAction(context);
+            await registerUserUpdateAction(context);
             try {
               await FirebaseFirestore.instance.collection(collectionName).add({
                 'name': expectedName,
@@ -2733,8 +2774,6 @@ class FloorPlanCard extends StatelessWidget {
       child: InkWell(
         customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         onTap: () async {
-          registerUserUpdateAction(context);
-
           try {
             if (mergedGroupId != null) {
               await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
@@ -2744,6 +2783,7 @@ class FloorPlanCard extends StatelessWidget {
                 'lastUpdated': Timestamp.now(),
                 'updatedBy': userDisplayName,
               });
+              if (context.mounted) await registerUserUpdateAction(context);
             }
           } catch (e) {
             debugPrint('Error updating table: $e');
@@ -2764,6 +2804,7 @@ class FloorPlanCard extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
                     expectedName,
@@ -3066,7 +3107,7 @@ class LastUpdateWidget extends StatelessWidget {
 }
 
 // ==========================================
-// Lucky Wheel Dialog & Painter (14 ช่องรางวัลครบตามสั่ง + ระบบสุ่มซ้อน + โล่กันแต้ม)
+// Lucky Wheel Dialog & Painter
 // ==========================================
 class LuckyWheelDialog extends StatefulWidget {
   final int currentScore;
@@ -3080,7 +3121,7 @@ class _WheelReward {
   final String label;
   final String shortText;
   final Color color;
-  final String type; // 'jackpot', 'sub_frame', 'shield', 'sub_title', 'buff', 'free_spin', 'bonus', 'salt', 'penalty', 'mystery_key'
+  final String type;
   final dynamic value;
 
   const _WheelReward(this.label, this.shortText, this.color, this.type, this.value);
@@ -3093,7 +3134,6 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
   double _currentAngle = 0.0;
   String? _resultText;
 
-  // 14 ช่องรางวัลตามที่กำหนด
   final List<_WheelReward> rewards = const [
     _WheelReward('JACKPOT +500 แต้ม! 💥', '+500 💥', Color(0xFFFF1493), 'jackpot', 500),
     _WheelReward('กรอบโปรไฟล์ (สุ่ม) 🖼️', 'กรอบ 🖼️', Colors.deepPurple, 'sub_frame', null),
@@ -3115,6 +3155,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, duration: const Duration(seconds: 4));
+    _animation = Tween<double>(begin: 0.0, end: 0.0).animate(_controller);
   }
 
   @override
@@ -3132,124 +3173,206 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       return;
     }
 
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? globalUserId;
+
     setState(() {
       _isSpinning = true;
       _resultText = null;
+      globalUserScore = max(0, globalUserScore - 20);
     });
 
-    int newScore = globalUserScore - 20;
-    await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'score': newScore});
-    globalUserScore = newScore;
+    if (currentUid.isNotEmpty) {
+      FirebaseFirestore.instance.collection('users').doc(currentUid).set({
+        'score': globalUserScore,
+      }, SetOptions(merge: true)).catchError((e) => debugPrint('Error deduct score: $e'));
+    }
 
     final random = Random();
     final targetIndex = random.nextInt(rewards.length);
     final sectionAngle = (2 * pi) / rewards.length;
-    
+
     final targetSectorAngle = (3 * pi / 2) - (targetIndex * sectionAngle + sectionAngle / 2);
     final totalRotation = (5 * 2 * pi) + targetSectorAngle;
+    final endAngle = _currentAngle + totalRotation;
 
-    _animation = Tween<double>(begin: _currentAngle, end: _currentAngle + totalRotation).animate(
+    _animation = Tween<double>(begin: _currentAngle, end: endAngle).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
     );
 
     _controller.reset();
-    _controller.forward().then((_) async {
-      final reward = rewards[targetIndex];
-      _currentAngle = (_currentAngle + totalRotation) % (2 * pi);
+    await _controller.forward();
 
-      final userDoc = FirebaseFirestore.instance.collection('users').doc(globalUserId);
-      final updateData = <String, dynamic>{};
-      String finalRewardLabel = reward.label;
+    _currentAngle = endAngle % (2 * pi);
 
-      if (reward.type == 'jackpot' || reward.type == 'bonus' || reward.type == 'free_spin') {
-        int finalScore = max(0, globalUserScore + (reward.value as int));
+    final reward = rewards[targetIndex];
+    final updateData = <String, dynamic>{};
+    String finalRewardLabel = reward.label;
+
+    if (reward.type == 'jackpot' || reward.type == 'bonus' || reward.type == 'free_spin') {
+      int finalScore = max(0, globalUserScore + (reward.value as int));
+      updateData['score'] = finalScore;
+      globalUserScore = finalScore;
+    } else if (reward.type == 'shield') {
+      globalUserShields += 1;
+      updateData['shields'] = FieldValue.increment(1);
+      finalRewardLabel = 'โล่กันแต้มลด 🛡️ (+1 ชิ้นในคลัง)';
+    } else if (reward.type == 'sub_frame') {
+      final subFrames = ['neon', 'gold', 'rainbow', 'fire', 'ice'];
+      final subFrameNames = {
+        'neon': 'กรอบนีออน 💎',
+        'gold': 'กรอบทองคำ 👑',
+        'rainbow': 'กรอบสีรุ้ง 🌈',
+        'fire': 'กรอบเปลวไฟ 🔥',
+        'ice': 'กรอบน้ำแข็ง ❄️',
+      };
+      final pickedFrame = subFrames[random.nextInt(subFrames.length)];
+      final frameName = subFrameNames[pickedFrame]!;
+
+      updateData['frame'] = pickedFrame;
+      updateData['unlockedFrames'] = FieldValue.arrayUnion([pickedFrame]);
+      globalUserFrame = pickedFrame;
+      if (!globalUnlockedFrames.contains(pickedFrame)) globalUnlockedFrames.add(pickedFrame);
+      finalRewardLabel = 'สุ่มได้: $frameName';
+    } else if (reward.type == 'sub_title') {
+      final subTitles = [
+        'ราชาเกลือแห่งปี 🧂',
+        'เซียนพูลหน้ามน 🎱',
+        'ทาสแมวตัวจริง 🐾',
+        'พนักงานดีเด่น ☕',
+        'ดวงดีจัดๆ ⭐',
+        'นักเสี่ยงดวงแห่งปี 🎰',
+      ];
+      final pickedTitle = subTitles[random.nextInt(subTitles.length)];
+
+      updateData['title'] = pickedTitle;
+      updateData['unlockedTitles'] = FieldValue.arrayUnion([pickedTitle]);
+      globalUserTitle = pickedTitle;
+      if (!globalUnlockedTitles.contains(pickedTitle)) globalUnlockedTitles.add(pickedTitle);
+      finalRewardLabel = 'สุ่มได้ฉายา: "$pickedTitle"';
+    } else if (reward.type == 'mystery_key') {
+      final gained = 50 + random.nextInt(151);
+      int finalScore = globalUserScore + gained;
+      updateData['score'] = finalScore;
+      globalUserScore = finalScore;
+      finalRewardLabel = 'กุญแจกล่องสุ่ม 🎁 เปิดได้ +$gained แต้ม!';
+    } else if (reward.type == 'penalty') {
+      if (globalUserShields > 0) {
+        globalUserShields -= 1;
+        updateData['shields'] = FieldValue.increment(-1);
+        finalRewardLabel = '🛡️ โล่ทำงาน! ป้องกันบทลงโทษ (${reward.label}) ได้สำเร็จ';
+      } else {
+        int penaltyVal = reward.value as int;
+        int finalScore = max(0, globalUserScore + penaltyVal);
         updateData['score'] = finalScore;
         globalUserScore = finalScore;
-      } else if (reward.type == 'shield') {
-        globalUserShields += 1;
-        updateData['shields'] = FieldValue.increment(1);
-        finalRewardLabel = 'โล่กันแต้มลด 🛡️ (+1 ชิ้นในคลัง)';
-      } else if (reward.type == 'sub_frame') {
-        // สุ่มย่อยกรอบ: นีออน, ทอง, สีรุ้ง, เปลวไฟ, น้ำแข็ง
-        final subFrames = ['neon', 'gold', 'rainbow', 'fire', 'ice'];
-        final subFrameNames = {
-          'neon': 'กรอบนีออน 💎',
-          'gold': 'กรอบทองคำ 👑',
-          'rainbow': 'กรอบสีรุ้ง 🌈',
-          'fire': 'กรอบเปลวไฟ 🔥',
-          'ice': 'กรอบน้ำแข็ง ❄️',
-        };
-        final pickedFrame = subFrames[random.nextInt(subFrames.length)];
-        final frameName = subFrameNames[pickedFrame]!;
-        
-        updateData['frame'] = pickedFrame;
-        updateData['unlockedFrames'] = FieldValue.arrayUnion([pickedFrame]);
-        globalUserFrame = pickedFrame;
-        if (!globalUnlockedFrames.contains(pickedFrame)) globalUnlockedFrames.add(pickedFrame);
-        finalRewardLabel = 'สุ่มได้: $frameName';
-      } else if (reward.type == 'sub_title') {
-        // สุ่มย่อยฉายา
-        final subTitles = [
-          'ราชาเกลือแห่งปี 🧂',
-          'เซียนพูลหน้ามน 🎱',
-          'ทาสแมวตัวจริง 🐾',
-          'พนักงานดีเด่น ☕',
-          'ดวงดีจัดๆ ⭐',
-          'นักเสี่ยงดวงแห่งปี 🎰',
-        ];
-        final pickedTitle = subTitles[random.nextInt(subTitles.length)];
-        
-        updateData['title'] = pickedTitle;
-        updateData['unlockedTitles'] = FieldValue.arrayUnion([pickedTitle]);
-        globalUserTitle = pickedTitle;
-        if (!globalUnlockedTitles.contains(pickedTitle)) globalUnlockedTitles.add(pickedTitle);
-        finalRewardLabel = 'สุ่มได้ฉายา: "$pickedTitle"';
-      } else if (reward.type == 'mystery_key') {
-        // สุ่มแต้ม 50 - 200 แต้ม
-        final gained = 50 + random.nextInt(151);
-        int finalScore = globalUserScore + gained;
-        updateData['score'] = finalScore;
-        globalUserScore = finalScore;
-        finalRewardLabel = 'กุญแจกล่องสุ่ม 🎁 เปิดได้ +$gained แต้ม!';
-      } else if (reward.type == 'penalty') {
-        // ตรวจสอบโล่ป้องกัน
-        if (globalUserShields > 0) {
-          globalUserShields -= 1;
-          updateData['shields'] = FieldValue.increment(-1);
-          finalRewardLabel = '🛡️ โล่ทำงาน! ป้องกันบทลงโทษ (${reward.label}) ได้สำเร็จ';
-        } else {
-          int penaltyVal = reward.value as int;
-          int finalScore = max(0, globalUserScore + penaltyVal);
-          updateData['score'] = finalScore;
-          globalUserScore = finalScore;
-        }
-      } else if (reward.type == 'buff') {
-        final buffExpiry = DateTime.now().add(Duration(minutes: reward.value as int));
-        final ts = Timestamp.fromDate(buffExpiry);
-        updateData['buffX2Until'] = ts;
-        globalBuffX2Until = ts;
       }
+    } else if (reward.type == 'buff') {
+      final buffExpiry = DateTime.now().add(Duration(minutes: reward.value as int));
+      final ts = Timestamp.fromDate(buffExpiry);
+      updateData['buffX2Until'] = ts;
+      globalBuffX2Until = ts;
+    }
 
-      if (updateData.isNotEmpty) {
-        await userDoc.update(updateData);
-      }
+    if (currentUid.isNotEmpty && updateData.isNotEmpty) {
+      FirebaseFirestore.instance.collection('users').doc(currentUid).set(
+        updateData,
+        SetOptions(merge: true),
+      ).catchError((e) => debugPrint('Error updating user data: $e'));
+    }
 
-      // บันทึกลงประวัติการสุ่ม
-      await FirebaseFirestore.instance.collection('wheel_history').add({
-        'userName': globalUserName,
-        'userAvatar': globalUserAvatar,
-        'rewardLabel': finalRewardLabel,
-        'rewardType': reward.type,
-        'timestamp': Timestamp.now(),
+    FirebaseFirestore.instance.collection('wheel_history').add({
+      'userName': globalUserName.isNotEmpty ? globalUserName : 'Staff',
+      'userAvatar': globalUserAvatar,
+      'rewardLabel': finalRewardLabel,
+      'rewardType': reward.type,
+      'timestamp': Timestamp.now(),
+    }).catchError((e) => debugPrint('Error adding wheel_history: $e'));
+
+    if (mounted) {
+      setState(() {
+        _isSpinning = false;
+        _resultText = finalRewardLabel;
       });
 
-      if (mounted) {
-        setState(() {
-          _isSpinning = false;
-          _resultText = finalRewardLabel;
-        });
-      }
-    });
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: reward.type == 'penalty' ? Colors.red[50] : Colors.purple[50],
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: Text(
+                    reward.type == 'jackpot'
+                        ? '💥'
+                        : reward.type == 'penalty'
+                            ? '🔻'
+                            : reward.type == 'salt'
+                                ? '🧂'
+                                : '🎁',
+                    style: const TextStyle(fontSize: 36),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'ยินดีด้วย!',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: reward.type == 'penalty' ? Colors.red[50] : Colors.amber[50],
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: reward.type == 'penalty' ? Colors.red[300]! : Colors.amber[400]!,
+                  ),
+                ),
+                child: Text(
+                  finalRewardLabel,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: reward.type == 'penalty' ? Colors.red[800] : Colors.purple[900],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'แต้มคงเหลือ: $globalUserScore แต้ม',
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+            ],
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple[700],
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ตกลง', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   @override
@@ -3258,86 +3381,102 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       title: Column(
         children: [
-          const Text('🎰 Lucky Wheel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: Colors.purple)),
-          Text('แต้มของคุณ: $globalUserScore แต้ม (ใช้ 20 แต้ม) • 🛡️ โล่: $globalUserShields', style: const TextStyle(fontSize: 12.5, color: Colors.grey)),
+          const Text('🎰 Lucky Wheel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.purple)),
+          const SizedBox(height: 2),
+          Text('แต้มของคุณ: $globalUserScore แต้ม (ใช้ 20) • 🛡️ โล่: $globalUserShields', style: const TextStyle(fontSize: 12, color: Colors.grey)),
         ],
       ),
       content: SizedBox(
-        width: 330,
-        height: 490,
+        width: 300,
+        height: 390,
         child: Column(
           children: [
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                AnimatedBuilder(
-                  animation: _controller,
-                  builder: (context, child) {
-                    final angle = _isSpinning ? _animation.value : _currentAngle;
-                    return Transform.rotate(
-                      angle: angle,
-                      child: CustomPaint(
-                        size: const Size(220, 220),
-                        painter: _WheelPainter(rewards: rewards),
-                      ),
-                    );
-                  },
-                ),
-                Positioned(
-                  top: 0,
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2))],
-                    ),
-                    child: const Icon(Icons.arrow_drop_down, color: Colors.redAccent, size: 40),
+            SizedBox(
+              height: 160,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  AnimatedBuilder(
+                    animation: _animation,
+                    builder: (context, child) {
+                      final angle = _isSpinning ? _animation.value : _currentAngle;
+                      return Transform.rotate(
+                        angle: angle,
+                        child: CustomPaint(
+                          size: const Size(150, 150),
+                          painter: _WheelPainter(rewards: rewards),
+                        ),
+                      );
+                    },
                   ),
-                ),
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.stars, color: Colors.amber[700], size: 26),
-                ),
-              ],
+                  Positioned(
+                    top: 0,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        boxShadow: [BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2))],
+                      ),
+                      child: const Icon(Icons.arrow_drop_down, color: Colors.redAccent, size: 32),
+                    ),
+                  ),
+                  const CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Colors.white,
+                    child: Icon(Icons.stars, color: Colors.amber, size: 20),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
             if (_resultText != null)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: Colors.purple[50],
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.purple),
                 ),
                 child: Text(
                   '🎉 ผลลัพธ์: $_resultText',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.purple),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.purple),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               )
             else
-              const Text('แตะปุ่มด้านล่างเพื่อเริ่มหมุนวงล้อ 14 รางวัล!', style: TextStyle(color: Colors.grey, fontSize: 12)),
-            const SizedBox(height: 12),
+              const Text('กดหมุนเพื่อลุ้นรับรางวัล!', style: TextStyle(color: Colors.grey, fontSize: 11)),
+            const SizedBox(height: 8),
             const Divider(height: 1),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             
             Row(
               children: const [
-                Icon(Icons.history, size: 16, color: Colors.purple),
+                Icon(Icons.history, size: 14, color: Colors.purple),
                 SizedBox(width: 4),
-                Text('ประวัติการสุ่มล่าสุด 📜', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.purple)),
+                Text('ประวัติการสุ่มล่าสุด 📜', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.purple)),
               ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Expanded(
               child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance.collection('wheel_history').orderBy('timestamp', descending: true).limit(10).snapshots(),
+                stream: FirebaseFirestore.instance
+                    .collection('wheel_history')
+                    .orderBy('timestamp', descending: true)
+                    .limit(10)
+                    .snapshots(),
                 builder: (context, snapshot) {
-                  if (snapshot.hasError) return const Center(child: Text('ไม่สามารถโหลดประวัติได้', style: TextStyle(fontSize: 11)));
-                  if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Text('โหลดประวัติไม่สำเร็จ (${snapshot.error})', style: const TextStyle(fontSize: 10, color: Colors.red)),
+                    );
+                  }
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+                  }
 
-                  final docs = snapshot.data!.docs;
+                  final docs = snapshot.data?.docs ?? [];
                   if (docs.isEmpty) {
-                    return const Center(child: Text('ยังไม่มีประวัติการสุ่ม', style: TextStyle(fontSize: 11, color: Colors.grey)));
+                    return const Center(child: Text('ยังไม่มีประวัติการสุ่ม', style: TextStyle(fontSize: 10, color: Colors.grey)));
                   }
 
                   return ListView.builder(
@@ -3349,16 +3488,16 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                       final rType = item['rewardType'] ?? '';
 
                       return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2.5),
+                        padding: const EdgeInsets.symmetric(vertical: 1.5),
                         child: Row(
                           children: [
                             Text('• ', style: TextStyle(color: Colors.purple[300], fontWeight: FontWeight.bold)),
-                            Text('$uName: ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                            Text('$uName: ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10.5)),
                             Expanded(
                               child: Text(
                                 rLabel,
                                 style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10.5,
                                   color: (rType == 'jackpot' || rLabel.contains('500') || rLabel.contains('กล่องสุ่ม')) 
                                       ? Colors.red[700] 
                                       : (rType == 'penalty' ? Colors.red : Colors.black87),
@@ -3387,13 +3526,13 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.purple[700],
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           ),
           onPressed: _isSpinning ? null : _spin,
-          icon: const Icon(Icons.play_arrow, color: Colors.white),
+          icon: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
           label: Text(
             _isSpinning ? 'กำลังหมุน...' : 'หมุนเลย (20 แต้ม)',
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
           ),
         ),
       ],
@@ -3443,7 +3582,7 @@ class _WheelPainter extends CustomPainter {
 
       final textSpan = TextSpan(
         text: rewards[i].shortText,
-        style: const TextStyle(color: Colors.white, fontSize: 8.5, fontWeight: FontWeight.bold),
+        style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
       );
       final textPainter = TextPainter(
         text: textSpan,
@@ -3451,7 +3590,7 @@ class _WheelPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       );
       textPainter.layout();
-      textPainter.paint(canvas, Offset(radius * 0.40, -textPainter.height / 2));
+      textPainter.paint(canvas, Offset(radius * 0.38, -textPainter.height / 2));
       canvas.restore();
     }
   }
@@ -3501,16 +3640,44 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     final today = getTodayKey();
 
     try {
-      await targetUserRef.update({
-        'hearts': FieldValue.increment(1),
-      });
-
       final currentTimestamp = Timestamp.now();
+
+      await targetUserRef.update({'hearts': FieldValue.increment(1)});
+
+      final mySnap = await myUserRef.get();
+      final myData = mySnap.data() ?? {};
+
+      Map<String, dynamic> allDailyQuests = {};
+      if (myData['dailyQuests'] is Map) {
+        allDailyQuests = Map<String, dynamic>.from(myData['dailyQuests']);
+      }
+
+      Map<String, dynamic> todayQuest = {};
+      if (allDailyQuests[today] is Map) {
+        todayQuest = Map<String, dynamic>.from(allDailyQuests[today]);
+      }
+
+      List<dynamic> heartSentUsers = (todayQuest['heartSentUsers'] is List) ? List.from(todayQuest['heartSentUsers']) : [];
+      if (!heartSentUsers.contains(targetDocId)) {
+        heartSentUsers.add(targetDocId);
+      }
+      int heartSentTotal = (todayQuest['heartSentTotal'] is num) ? (todayQuest['heartSentTotal'] as num).toInt() : 0;
+      heartSentTotal += 1;
+
+      todayQuest['heartSentUsers'] = heartSentUsers;
+      todayQuest['heartSentTotal'] = heartSentTotal;
+      allDailyQuests[today] = todayQuest;
+
+      Map<String, dynamic> lastHeartMap = {};
+      if (myData['lastHeartSent'] is Map) {
+        lastHeartMap = Map<String, dynamic>.from(myData['lastHeartSent']);
+      }
+      lastHeartMap[targetDocId] = currentTimestamp;
+
       await myUserRef.set({
         'score': FieldValue.increment(1),
-        'lastHeartSent.$targetDocId': currentTimestamp,
-        'dailyQuests.$today.heartSentUsers': FieldValue.arrayUnion([targetDocId]),
-        'dailyQuests.$today.heartSentTotal': FieldValue.increment(1),
+        'lastHeartSent': lastHeartMap,
+        'dailyQuests': allDailyQuests,
       }, SetOptions(merge: true));
 
       setState(() {
@@ -3747,7 +3914,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                 children: [
                                   Text('$score แต้ม', style: const TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
                                   const SizedBox(width: 8),
-                                  Text('•  ❤️ $hearts', style: const TextStyle(fontSize: 13, color: Colors.pink, fontWeight: FontWeight.bold)),
+                                  Text('•   ❤️ $hearts', style: const TextStyle(fontSize: 13, color: Colors.pink, fontWeight: FontWeight.bold)),
                                 ],
                               ),
                               trailing: Row(
@@ -3814,7 +3981,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // แบนเนอร์หมุนวงล้อ Lucky Wheel (20 แต้ม)
                     Card(
                       elevation: 4,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -3867,7 +4033,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // จัดการกรอบโปรไฟล์ในคลัง (นีออน / ทอง / รุ้ง / เปลวไฟ / น้ำแข็ง)
                     const Text('🖼️ กรอบโปรไฟล์ในคลัง', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     Wrap(
@@ -3883,7 +4048,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // เลือกแลกและสลับฉายา
                     const Text('🎖️ ฉายา & คลังฉายา', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
 
@@ -4096,7 +4260,7 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
                         ],
                         Flexible(
                           child: Column(
-                            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               if (!isMe)
                                 Text(
