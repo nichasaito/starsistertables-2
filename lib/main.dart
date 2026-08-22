@@ -14,7 +14,7 @@ String globalUserId = '';
 String globalUserName = '';
 String globalUserAvatar = '🐱';
 String globalUserTitle = '';
-String globalUserFrame = ''; // 'gold', 'neon', 'rainbow', 'fire', 'ice', ''
+String globalUserFrame = ''; // 'gold', 'neon', 'rainbow', 'fire', 'ice', 'challenger', ''
 List<String> globalUnlockedTitles = [];
 List<String> globalUnlockedFrames = [];
 Timestamp? globalBuffX2Until;
@@ -127,6 +127,17 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
         BoxShadow(color: Colors.white, blurRadius: 4, spreadRadius: 0.5),
       ],
     );
+  } else if (frame == 'challenger') {
+    frameDecoration = const BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: SweepGradient(
+        colors: [Colors.amber, Colors.purpleAccent, Colors.cyanAccent, Colors.amber],
+      ),
+      boxShadow: [
+        BoxShadow(color: Colors.purpleAccent, blurRadius: 10, spreadRadius: 2),
+        BoxShadow(color: Colors.amberAccent, blurRadius: 6, spreadRadius: 1),
+      ],
+    );
   }
 
   Widget circle = CircleAvatar(
@@ -147,8 +158,8 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
   return circle;
 }
 
-// บันทึกคลิก: เลเวลอัป + นับเควส 1
-Future<void> registerUserUpdateAction(BuildContext? context) async {
+// บันทึกคลิก: เลเวลอัป + นับภารกิจอัปเดตโต๊ะ และภารกิจตรวจครบทุกชั้น
+Future<void> registerUserUpdateAction(BuildContext? context, {String? collectionName}) async {
   final user = FirebaseAuth.instance.currentUser;
   final currentUid = user?.uid ?? globalUserId;
   if (currentUid.isEmpty) return;
@@ -193,6 +204,16 @@ Future<void> registerUserUpdateAction(BuildContext? context) async {
 
     int currentTableUpdates = (todayQuest['tableUpdates'] is num) ? (todayQuest['tableUpdates'] as num).toInt() : 0;
     todayQuest['tableUpdates'] = currentTableUpdates + 1;
+
+    // บันทึกภารกิจตรวจครบทุกชั้น
+    if (collectionName != null) {
+      List<dynamic> updatedFloors = (todayQuest['updatedFloors'] is List) ? List.from(todayQuest['updatedFloors']) : [];
+      if (!updatedFloors.contains(collectionName)) {
+        updatedFloors.add(collectionName);
+      }
+      todayQuest['updatedFloors'] = updatedFloors;
+    }
+
     allDailyQuests[today] = todayQuest;
 
     Map<String, dynamic> finalUpdate = {
@@ -231,7 +252,42 @@ Future<void> registerUserUpdateAction(BuildContext? context) async {
       );
     }
   } catch (e) {
-    debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล/เควส: $e');
+    debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล/ภารกิจ: $e');
+  }
+}
+
+// ฟังก์ชันช่วยเหลือสำหรับบันทึกภารกิจแบบกำหนดเอง
+Future<void> recordCustomDailyQuest(String questKey, dynamic value) async {
+  final currentUid = FirebaseAuth.instance.currentUser?.uid ?? globalUserId;
+  if (currentUid.isEmpty) return;
+  final today = getTodayKey();
+  final userRef = FirebaseFirestore.instance.collection('users').doc(currentUid);
+
+  try {
+    final snap = await userRef.get();
+    final data = snap.data() ?? {};
+
+    Map<String, dynamic> allDailyQuests = {};
+    if (data['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(data['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[today] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[today]);
+    }
+
+    if (value is int && todayQuest[questKey] is num) {
+      todayQuest[questKey] = (todayQuest[questKey] as num).toInt() + value;
+    } else {
+      todayQuest[questKey] = value;
+    }
+
+    allDailyQuests[today] = todayQuest;
+
+    await userRef.set({'dailyQuests': allDailyQuests}, SetOptions(merge: true));
+  } catch (e) {
+    debugPrint('Error recording custom quest ($questKey): $e');
   }
 }
 
@@ -610,7 +666,13 @@ class _MainScreenState extends State<MainScreen> {
                                                     )
                                                   : selectedFrame == 'ice'
                                                       ? BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.lightBlueAccent, width: 3))
-                                                      : null,
+                                                      : selectedFrame == 'challenger'
+                                                          ? const BoxDecoration(
+                                                              shape: BoxShape.circle,
+                                                              gradient: SweepGradient(colors: [Colors.amber, Colors.purpleAccent, Colors.cyanAccent, Colors.amber]),
+                                                              boxShadow: [BoxShadow(color: Colors.purpleAccent, blurRadius: 8, spreadRadius: 1)],
+                                                            )
+                                                          : null,
                                   padding: const EdgeInsets.all(3),
                                   child: CircleAvatar(radius: 28, backgroundImage: FileImage(newPickedFile!)),
                                 )
@@ -750,6 +812,15 @@ class _MainScreenState extends State<MainScreen> {
                                 setDialogState(() => selectedFrame = selected ? 'ice' : '');
                               },
                             ),
+                          if (globalUnlockedFrames.contains('challenger'))
+                            ChoiceChip(
+                              label: const Text('🏆 Challenger Aura ⚡'),
+                              selected: selectedFrame == 'challenger',
+                              selectedColor: Colors.purple[100],
+                              onSelected: (selected) {
+                                setDialogState(() => selectedFrame = selected ? 'challenger' : '');
+                              },
+                            ),
                         ],
                       ),
                       const SizedBox(height: 16),
@@ -881,7 +952,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ==========================================
-// DailyQuestsScreen
+// DailyQuestsScreen (ปรับหัวข้อทั้งหมด ไม่มีคำว่า เควส/เควส 1-4)
 // ==========================================
 class DailyQuestsScreen extends StatefulWidget {
   const DailyQuestsScreen({super.key});
@@ -914,7 +985,6 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
       streakCount = 1;
     }
 
-    // กล่องสุ่มแต้ม 10 ถึง 60 แต้ม
     final random = Random();
     final int mysteryPoints = 10 + random.nextInt(51); 
     int totalGainedPoints = mysteryPoints;
@@ -990,7 +1060,7 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
               ],
               if (isFirstCheckInToday) ...[
                 const SizedBox(height: 8),
-                const Text('🏆 คุณเป็นคนแรกของวัน! (สำเร็จเควส 4 แล้ว)', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
+                const Text('🏆 คุณเป็นคนแรกของวัน! (สำเร็จภารกิจราชาเปิดร้านแล้ว)', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
               ],
               const SizedBox(height: 12),
               Text('สะสม Streak ต่อเนื่อง: $streakCount วันติด 🔥', style: const TextStyle(color: Colors.black54, fontSize: 13)),
@@ -1068,20 +1138,49 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
             dailyQuestsMap = Map<String, dynamic>.from(rawDaily[todayKey]);
           }
 
+          // ข้อมูลการนับภารกิจ
           final int tableUpdates = (dailyQuestsMap['tableUpdates'] is num) ? (dailyQuestsMap['tableUpdates'] as num).toInt() : 0;
           final List<dynamic> heartSentUsers = (dailyQuestsMap['heartSentUsers'] is List) ? List.from(dailyQuestsMap['heartSentUsers']) : [];
           final int heartSentTotal = (dailyQuestsMap['heartSentTotal'] is num) ? (dailyQuestsMap['heartSentTotal'] as num).toInt() : 0;
           final bool isFirstCheckIn = dailyQuestsMap['isFirstCheckIn'] == true;
+          final bool hasUpdatedDailyNote = dailyQuestsMap['hasUpdatedDailyNote'] == true;
+          final int wheelSpinCount = (dailyQuestsMap['wheelSpinCount'] is num) ? (dailyQuestsMap['wheelSpinCount'] as num).toInt() : 0;
+          final bool hasChattedToday = dailyQuestsMap['hasChattedToday'] == true;
+          final List<dynamic> updatedFloors = (dailyQuestsMap['updatedFloors'] is List) ? List.from(dailyQuestsMap['updatedFloors']) : [];
 
+          // สถานะการรับรางวัล
           final bool q1Claimed = dailyQuestsMap['claimed_q1'] == true;
           final bool q2Claimed = dailyQuestsMap['claimed_q2'] == true;
           final bool q3Claimed = dailyQuestsMap['claimed_q3'] == true;
           final bool q4Claimed = dailyQuestsMap['claimed_q4'] == true;
+          final bool qNewsClaimed = dailyQuestsMap['claimed_q_news'] == true;
+          final bool qSpinClaimed = dailyQuestsMap['claimed_q_spin'] == true;
+          final bool qChatClaimed = dailyQuestsMap['claimed_q_chat'] == true;
+          final bool qFloorsClaimed = dailyQuestsMap['claimed_q_floors'] == true;
+          final bool qMasterClaimed = dailyQuestsMap['claimed_q_master'] == true;
 
+          // เงื่อนไขความสำเร็จ
           final bool q1Completed = tableUpdates >= 30;
           final bool q2Completed = heartSentUsers.length >= 5;
           final bool q3Completed = heartSentTotal >= 20;
           final bool q4Completed = isFirstCheckIn;
+          final bool qNewsCompleted = hasUpdatedDailyNote;
+          final bool qSpinCompleted = wheelSpinCount >= 1;
+          final bool qChatCompleted = hasChattedToday;
+          final bool qFloorsCompleted = updatedFloors.contains('tables_f1') && updatedFloors.contains('tables_f2') && updatedFloors.contains('tables_f3');
+
+          // นับจำนวนภารกิจย่อยที่สำเร็จ (สำหรับ All-Clear Master)
+          final otherCompletedQuests = [
+            q1Completed,
+            q2Completed,
+            q3Completed,
+            q4Completed,
+            qNewsCompleted,
+            qSpinCompleted,
+            qChatCompleted,
+            qFloorsCompleted,
+          ].where((c) => c).length;
+          final bool qMasterCompleted = otherCompletedQuests >= 4;
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -1197,8 +1296,70 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
               ),
               const SizedBox(height: 12),
 
+              // ⭐ All-Clear Master
               _buildQuestCard(
-                title: 'เควส 1: อัปเดตโต๊ะครบ 30 ครั้ง',
+                title: '⭐ All-Clear Master (ภารกิจใหญ่)',
+                subtitle: 'ทำภารกิจรายวันอื่นๆ สำเร็จอย่างน้อย 4 ภารกิจ ($otherCompletedQuests/4)',
+                progress: min(1.0, otherCompletedQuests / 4.0),
+                rewardText: '+20 แต้ม',
+                rewardScore: 20,
+                isCompleted: qMasterCompleted,
+                isClaimed: qMasterClaimed,
+                onClaim: () => _claimQuestReward('q_master', 20),
+                isHighlight: true,
+              ),
+
+              // 🏃 สายตรวจครบทุกชั้น
+              _buildQuestCard(
+                title: '🏃 สายตรวจครบทุกชั้น',
+                subtitle: 'อัปเดตสถานะโต๊ะในชั้น 1, ชั้น 2 และชั้น 3 (${updatedFloors.length}/3 ชั้น)',
+                progress: min(1.0, updatedFloors.length / 3.0),
+                rewardText: '+10 แต้ม',
+                rewardScore: 10,
+                isCompleted: qFloorsCompleted,
+                isClaimed: qFloorsClaimed,
+                onClaim: () => _claimQuestReward('q_floors', 10),
+              ),
+
+              // 📌 ผู้ช่วยกระจายข่าว
+              _buildQuestCard(
+                title: '📌 ผู้ช่วยกระจายข่าว',
+                subtitle: hasUpdatedDailyNote ? 'อัปเดตประกาศสำคัญประจำวันแล้ว' : 'กดแก้ไขหรืออัปเดตประกาศสำคัญประจำวัน 1 ครั้ง',
+                progress: hasUpdatedDailyNote ? 1.0 : 0.0,
+                rewardText: '+5 แต้ม',
+                rewardScore: 5,
+                isCompleted: qNewsCompleted,
+                isClaimed: qNewsClaimed,
+                onClaim: () => _claimQuestReward('q_news', 5),
+              ),
+
+              // 🎰 นักเสี่ยงดวงประจำวัน
+              _buildQuestCard(
+                title: '🎰 นักเสี่ยงดวงประจำวัน',
+                subtitle: 'หมุนวงล้อ Lucky Wheel อย่างน้อย 1 ครั้ง ($wheelSpinCount/1)',
+                progress: min(1.0, wheelSpinCount / 1.0),
+                rewardText: '+5 แต้ม',
+                rewardScore: 5,
+                isCompleted: qSpinCompleted,
+                isClaimed: qSpinClaimed,
+                onClaim: () => _claimQuestReward('q_spin', 5),
+              ),
+
+              // 💬 ทักทายเพื่อนร่วมงาน
+              _buildQuestCard(
+                title: '💬 ทักทายเพื่อนร่วมงาน',
+                subtitle: hasChattedToday ? 'ส่งข้อความทักทายในแชททีมแล้ว' : 'พิมพ์ข้อความในห้องแชททีม 1 ครั้งในวันนั้น',
+                progress: hasChattedToday ? 1.0 : 0.0,
+                rewardText: '+5 แต้ม',
+                rewardScore: 5,
+                isCompleted: qChatCompleted,
+                isClaimed: qChatClaimed,
+                onClaim: () => _claimQuestReward('q_chat', 5),
+              ),
+
+              // ⚡ พนักงานขยันขันแข็ง
+              _buildQuestCard(
+                title: '⚡ พนักงานขยันขันแข็ง',
                 subtitle: 'อัปเดตสถานะโต๊ะในร้าน ($tableUpdates/30)',
                 progress: min(1.0, tableUpdates / 30.0),
                 rewardText: '+10 แต้ม',
@@ -1208,8 +1369,9 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
                 onClaim: () => _claimQuestReward('q1', 10),
               ),
 
+              // 💖 มิตรภาพกว้างไกล
               _buildQuestCard(
-                title: 'เควส 2: ส่งกำลังใจให้เพื่อนครบ 5 คน',
+                title: '💖 มิตรภาพกว้างไกล',
                 subtitle: 'ส่งหัวใจให้เพื่อนไม่ซ้ำคน (${heartSentUsers.length}/5)',
                 progress: min(1.0, heartSentUsers.length / 5.0),
                 rewardText: '+5 แต้ม',
@@ -1219,8 +1381,9 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
                 onClaim: () => _claimQuestReward('q2', 5),
               ),
 
+              // 💌 ส่งรักรัวๆ
               _buildQuestCard(
-                title: 'เควส 3: ส่งกำลังใจให้เพื่อนครบ 20 ครั้ง',
+                title: '💌 ส่งรักรัวๆ',
                 subtitle: 'ส่งหัวใจรวมทั้งหมดในวันนี้ ($heartSentTotal/20)',
                 progress: min(1.0, heartSentTotal / 20.0),
                 rewardText: '+5 แต้ม',
@@ -1230,8 +1393,9 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
                 onClaim: () => _claimQuestReward('q3', 5),
               ),
 
+              // 🏆 ราชาเปิดร้าน
               _buildQuestCard(
-                title: 'เควส 4: เช็กชื่อคนแรกของวัน 🏆',
+                title: '🏆 ราชาเปิดร้าน',
                 subtitle: isFirstCheckIn ? 'คุณคือคนแรกที่เช็กชื่อวันนี้!' : 'มีเพื่อนเช็กชื่อคนแรกไปแล้วหรือยังไม่ได้เปิดกล่องสุ่ม',
                 progress: isFirstCheckIn ? 1.0 : 0.0,
                 rewardText: '+10 แต้ม',
@@ -1256,11 +1420,19 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
     required bool isCompleted,
     required bool isClaimed,
     required VoidCallback onClaim,
+    bool isHighlight = false,
   }) {
     return Card(
-      elevation: 2,
+      elevation: isHighlight ? 4 : 2,
       margin: const EdgeInsets.symmetric(vertical: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: isHighlight ? Colors.amber[50] : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isHighlight ? Colors.amber[600]! : Colors.transparent,
+          width: isHighlight ? 1.5 : 0,
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -1379,6 +1551,9 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                   'updatedAt': Timestamp.now(),
                 });
 
+                // บันทึกภารกิจผู้ช่วยกระจายข่าว
+                await recordCustomDailyQuest('hasUpdatedDailyNote', true);
+
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
               },
               child: const Text('บันทึกประกาศ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -1463,7 +1638,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       await batch.commit();
       if (mounted) {
-        await registerUserUpdateAction(context);
+        await registerUserUpdateAction(context, collectionName: collectionName);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: targetStatus ? Colors.green[800] : Colors.red[800],
@@ -1603,7 +1778,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       await batch.commit();
       if (mounted) {
-        await registerUserUpdateAction(context);
+        await registerUserUpdateAction(context, collectionName: collectionName);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.blue[900],
@@ -1656,7 +1831,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                     'waitingQueue': [],
                   });
                   if (context.mounted) {
-                    await registerUserUpdateAction(context);
+                    await registerUserUpdateAction(context, collectionName: _collections[activeIndex]);
                     Navigator.pop(context);
                   }
                 }
@@ -2149,7 +2324,7 @@ class TableGrid extends StatelessWidget {
                 try {
                   await ref.doc(docId).delete();
                   if (context.mounted) {
-                    await registerUserUpdateAction(context);
+                    await registerUserUpdateAction(context, collectionName: collectionName);
                     Navigator.pop(context);
                   }
                 } catch (e) {
@@ -2382,7 +2557,7 @@ class FloorPlanCard extends StatelessWidget {
 
                           await batch.commit();
                           if (context.mounted) {
-                            await registerUserUpdateAction(context);
+                            await registerUserUpdateAction(context, collectionName: collectionName);
                             Navigator.pop(dialogContext);
                           }
                         },
@@ -2423,7 +2598,7 @@ class FloorPlanCard extends StatelessWidget {
 
       await batch.commit();
       if (context.mounted) {
-        await registerUserUpdateAction(context);
+        await registerUserUpdateAction(context, collectionName: collectionName);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✂️ แยกโต๊ะเรียบร้อยแล้ว'), backgroundColor: Colors.blue),
         );
@@ -2457,7 +2632,7 @@ class FloorPlanCard extends StatelessWidget {
       }
 
       await batch.commit();
-      if (context.mounted) await registerUserUpdateAction(context);
+      if (context.mounted) await registerUserUpdateAction(context, collectionName: collectionName);
     } catch (e) {
       debugPrint('Toggle error: $e');
     }
@@ -2589,7 +2764,7 @@ class FloorPlanCard extends StatelessWidget {
                                       'waitingQueue': queueList,
                                       'lastUpdated': Timestamp.now(),
                                     });
-                                    if (context.mounted) await registerUserUpdateAction(context);
+                                    if (context.mounted) await registerUserUpdateAction(context, collectionName: collectionName);
                                   }
                                 },
                                 icon: const Icon(Icons.add, size: 18, color: Colors.white),
@@ -2652,7 +2827,7 @@ class FloorPlanCard extends StatelessWidget {
                                       'waitingQueue': queueList,
                                       'lastUpdated': Timestamp.now(),
                                     });
-                                    if (context.mounted) await registerUserUpdateAction(context);
+                                    if (context.mounted) await registerUserUpdateAction(context, collectionName: collectionName);
                                   },
                                 ),
                               ),
@@ -2700,7 +2875,7 @@ class FloorPlanCard extends StatelessWidget {
         child: InkWell(
           customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           onTap: () async {
-            await registerUserUpdateAction(context);
+            await registerUserUpdateAction(context, collectionName: collectionName);
             try {
               await FirebaseFirestore.instance.collection(collectionName).add({
                 'name': expectedName,
@@ -2783,7 +2958,7 @@ class FloorPlanCard extends StatelessWidget {
                 'lastUpdated': Timestamp.now(),
                 'updatedBy': userDisplayName,
               });
-              if (context.mounted) await registerUserUpdateAction(context);
+              if (context.mounted) await registerUserUpdateAction(context, collectionName: collectionName);
             }
           } catch (e) {
             debugPrint('Error updating table: $e');
@@ -3136,9 +3311,11 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
 
   final List<_WheelReward> rewards = const [
     _WheelReward('JACKPOT +500 แต้ม! 💥', '+500 💥', Color(0xFFFF1493), 'jackpot', 500),
-    _WheelReward('กรอบโปรไฟล์ (สุ่ม) 🖼️', 'กรอบ 🖼️', Colors.deepPurple, 'sub_frame', null),
+    _WheelReward('🏆 กรอบโปรไฟล์: "Challenger Aura ⚡"', 'กรอบ ⚡', Colors.deepPurple, 'sub_frame', 'challenger'),
     _WheelReward('โล่กันแต้มลด 🛡️', 'โล่ 🛡️', Colors.blueAccent, 'shield', 1),
-    _WheelReward('ฉายาลับใหม่ (สุ่ม) ⭐', 'ฉายา ⭐', Colors.purpleAccent, 'sub_title', null),
+    _WheelReward('👑 ฉายา: "ไร้พ่าย No.1"', 'ไร้พ่าย 👑', Colors.amber, 'fixed_title', 'ไร้พ่าย No.1'),
+    _WheelReward('ฉายา: "Tryhard ตัวจริง"', 'Tryhard 🎯', Colors.purpleAccent, 'fixed_title', 'Tryhard ตัวจริง'),
+    _WheelReward('ฉายา: "นักไต่แรงก์"', 'ไต่แรงก์ ⚔️', Colors.indigoAccent, 'fixed_title', 'นักไต่แรงก์'),
     _WheelReward('บัฟแต้ม x2 (30 นาที) 🔥', 'บัฟ x2', Colors.deepOrange, 'buff', 30),
     _WheelReward('ตั๋วหมุนฟรี 🎟️', 'หมุนฟรี 🎟️', Colors.teal, 'free_spin', 20),
     _WheelReward('โบนัส +100 แต้ม ✨', '+100 ✨', Colors.amber, 'bonus', 100),
@@ -3147,7 +3324,6 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
     _WheelReward('เกลือ 🧂', 'เกลือ 🧂', Colors.grey, 'salt', 0),
     _WheelReward('แย่แล้ว! -2 แต้ม 🔻', '-2 🔻', Color(0xFFEF5350), 'penalty', -2),
     _WheelReward('แย่แล้ว! -6 แต้ม 🔻', '-6 🔻', Color(0xFFE53935), 'penalty', -6),
-    _WheelReward('แย่แล้ว! -10 แต้ม 🔻', '-10 🔻', Color(0xFFC62828), 'penalty', -10),
     _WheelReward('กุญแจกล่องสุ่ม (50-200 แต้ม) 🎁', 'กล่องสุ่ม 🎁', Color(0xFF9C27B0), 'mystery_key', null),
   ];
 
@@ -3187,6 +3363,9 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       }, SetOptions(merge: true)).catchError((e) => debugPrint('Error deduct score: $e'));
     }
 
+    // บันทึกภารกิจนักเสี่ยงดวงประจำวัน
+    await recordCustomDailyQuest('wheelSpinCount', 1);
+
     final random = Random();
     final targetIndex = random.nextInt(rewards.length);
     final sectionAngle = (2 * pi) / rewards.length;
@@ -3217,38 +3396,19 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       updateData['shields'] = FieldValue.increment(1);
       finalRewardLabel = 'โล่กันแต้มลด 🛡️ (+1 ชิ้นในคลัง)';
     } else if (reward.type == 'sub_frame') {
-      final subFrames = ['neon', 'gold', 'rainbow', 'fire', 'ice'];
-      final subFrameNames = {
-        'neon': 'กรอบนีออน 💎',
-        'gold': 'กรอบทองคำ 👑',
-        'rainbow': 'กรอบสีรุ้ง 🌈',
-        'fire': 'กรอบเปลวไฟ 🔥',
-        'ice': 'กรอบน้ำแข็ง ❄️',
-      };
-      final pickedFrame = subFrames[random.nextInt(subFrames.length)];
-      final frameName = subFrameNames[pickedFrame]!;
-
+      final pickedFrame = (reward.value != null) ? (reward.value as String) : 'challenger';
       updateData['frame'] = pickedFrame;
       updateData['unlockedFrames'] = FieldValue.arrayUnion([pickedFrame]);
       globalUserFrame = pickedFrame;
       if (!globalUnlockedFrames.contains(pickedFrame)) globalUnlockedFrames.add(pickedFrame);
-      finalRewardLabel = 'สุ่มได้: $frameName';
-    } else if (reward.type == 'sub_title') {
-      final subTitles = [
-        'ราชาเกลือแห่งปี 🧂',
-        'เซียนพูลหน้ามน 🎱',
-        'ทาสแมวตัวจริง 🐾',
-        'พนักงานดีเด่น ☕',
-        'ดวงดีจัดๆ ⭐',
-        'นักเสี่ยงดวงแห่งปี 🎰',
-      ];
-      final pickedTitle = subTitles[random.nextInt(subTitles.length)];
-
-      updateData['title'] = pickedTitle;
-      updateData['unlockedTitles'] = FieldValue.arrayUnion([pickedTitle]);
-      globalUserTitle = pickedTitle;
-      if (!globalUnlockedTitles.contains(pickedTitle)) globalUnlockedTitles.add(pickedTitle);
-      finalRewardLabel = 'สุ่มได้ฉายา: "$pickedTitle"';
+      finalRewardLabel = 'สุ่มได้: 🏆 Challenger Aura ⚡';
+    } else if (reward.type == 'fixed_title') {
+      final title = reward.value as String;
+      updateData['title'] = title;
+      updateData['unlockedTitles'] = FieldValue.arrayUnion([title]);
+      globalUserTitle = title;
+      if (!globalUnlockedTitles.contains(title)) globalUnlockedTitles.add(title);
+      finalRewardLabel = 'สุ่มได้ฉายา: "$title"';
     } else if (reward.type == 'mystery_key') {
       final gained = 50 + random.nextInt(151);
       int finalScore = globalUserScore + gained;
@@ -3501,7 +3661,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                                   color: (rType == 'jackpot' || rLabel.contains('500') || rLabel.contains('กล่องสุ่ม')) 
                                       ? Colors.red[700] 
                                       : (rType == 'penalty' ? Colors.red : Colors.black87),
-                                  fontWeight: rLabel.contains('500') || rType == 'sub_title' || rType == 'sub_frame' ? FontWeight.bold : FontWeight.normal,
+                                  fontWeight: rLabel.contains('500') || rType == 'fixed_title' || rType == 'sub_frame' ? FontWeight.bold : FontWeight.normal,
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -4012,7 +4172,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                   ),
                                   SizedBox(height: 4),
                                   Text(
-                                    'ลุ้น Jackpot +500 แต้ม, กล่องสุ่ม, โล่ 🛡️, กรอบรุ้ง 🌈 (20 แต้ม/ครั้ง)',
+                                    'ลุ้น Jackpot +500 แต้ม, กรอบ Challenger Aura ⚡, ฉายา ไร้พ่าย No.1 (20 แต้ม/ครั้ง)',
                                     style: TextStyle(color: Colors.white70, fontSize: 11),
                                   ),
                                 ],
@@ -4044,6 +4204,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                         SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('สีรุ้ง 🌈', 'rainbow')),
                         SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('เปลวไฟ 🔥', 'fire')),
                         SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('น้ำแข็ง ❄️', 'ice')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('Challenger ⚡', 'challenger')),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -4056,6 +4217,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     _buildTitleItem('ยอดอัพเดตโต๊ะ 🥈', 500, myCurrentScore),
                     _buildTitleItem('ท่านเทพอัพเดตโต๊ะ 🥇', 700, myCurrentScore),
                     _buildTitleItem('GMจอมขยัน 👑', 1000, myCurrentScore),
+                    if (globalUnlockedTitles.contains('ไร้พ่าย No.1')) _buildTitleItem('👑 ไร้พ่าย No.1', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('Tryhard ตัวจริง')) _buildTitleItem('🎯 Tryhard ตัวจริง', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('นักไต่แรงก์')) _buildTitleItem('⚔️ นักไต่แรงก์', 0, myCurrentScore),
                     if (globalUnlockedTitles.contains('ราชาเกลือแห่งปี 🧂')) _buildTitleItem('ราชาเกลือแห่งปี 🧂', 0, myCurrentScore),
                     if (globalUnlockedTitles.contains('เซียนพูลหน้ามน 🎱')) _buildTitleItem('เซียนพูลหน้ามน 🎱', 0, myCurrentScore),
                     if (globalUnlockedTitles.contains('ทาสแมวตัวจริง 🐾')) _buildTitleItem('ทาสแมวตัวจริง 🐾', 0, myCurrentScore),
@@ -4173,10 +4337,10 @@ class TeamChatBottomSheet extends StatefulWidget {
 class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
   final TextEditingController _msgController = TextEditingController();
 
-  void _sendMessage() {
+  void _sendMessage() async {
     final text = _msgController.text.trim();
     if (text.isNotEmpty && globalUserId.isNotEmpty) {
-      FirebaseFirestore.instance.collection('chat_messages').add({
+      await FirebaseFirestore.instance.collection('chat_messages').add({
         'senderId': globalUserId,
         'senderName': globalUserName,
         'senderAvatar': globalUserAvatar,
@@ -4185,6 +4349,9 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
         'timestamp': Timestamp.now(),
       });
       _msgController.clear();
+
+      // บันทึกภารกิจทักทายเพื่อนร่วมงาน
+      await recordCustomDailyQuest('hasChattedToday', true);
     }
   }
 
