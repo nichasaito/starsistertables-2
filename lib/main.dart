@@ -28,8 +28,9 @@ int globalUserShields = 0;
 Map<String, dynamic> globalLastHeartSent = {};
 Map<String, dynamic> globalUserPet = {};
 List<dynamic> globalPetInventory = [];
+List<dynamic> globalCardInventory = []; // คลังการ์ดสะสม
 
-// รายชื่อสัตว์เลี้ยง 18 ชนิด (เพิ่มแรคคูน 🦝)
+// รายชื่อสัตว์เลี้ยง 18 ชนิด (รวมแรคคูน 🦝)
 const List<Map<String, String>> petTypesList = [
   {'type': '🐱', 'name': 'แมว'},
   {'type': '🐶', 'name': 'หมา'},
@@ -69,6 +70,32 @@ const List<Map<String, dynamic>> petGachaDatabase = [
   {'name': '🎀 โบว์รุ้งประกาย (+50 HP)', 'type': 'hat', 'atk': 0, 'hp': 50},
   {'name': '🎧 หูฟังเกมมิ่งเรืองแสง (+45 HP)', 'type': 'hat', 'atk': 0, 'hp': 45},
   {'name': '🎀 โบชมพู (+20 HP)', 'type': 'hat', 'atk': 0, 'hp': 20},
+];
+
+// โมเดลการ์ดอวกาศ 12 แบบ
+class CardReward {
+  final String name;
+  final String rarity;
+  final String emoji;
+  final Color color;
+  final int power;
+
+  const CardReward(this.name, this.rarity, this.emoji, this.color, this.power);
+}
+
+const List<CardReward> galaxyMeowCards = [
+  CardReward('สก็อตติชโฟลด์หินอุกกาบาต', 'Common 🥉', '🐱🪐', Colors.blueGrey, 50),
+  CardReward('เปอร์เซียเนบิวลาพาสเทล', 'Common 🥉', '🐱🌌', Colors.purpleAccent, 55),
+  CardReward('วิเชียรมาศจันทร์เสี้ยว', 'Common 🥉', '🐱🌙', Colors.indigo, 60),
+  CardReward('ส้มจอมซนแห่งทางช้างเผือก', 'Common 🥉', '🐱⭐', Colors.orange, 65),
+  CardReward('สฟิงซ์นักท่องกาแล็กซี', 'Rare 🥈', '🛸🐈', Colors.teal, 80),
+  CardReward('บริติชชอร์ตฮายร์ดาวตก', 'Rare 🥈', '🌠🐱', Colors.cyan, 85),
+  CardReward('แรคคูนอวกาศเพื่อนซี้เหมียว', 'Rare 🥈', '🦝🚀', Colors.blue, 90),
+  CardReward('สก็อตติชโฟลด์สูญญากาศ', 'Rare 🥈', '🪐🐾', Colors.deepPurple, 95),
+  CardReward('เมนคูนราชันย์ทางช้างเผือก', 'Super Rare 🥇', '👑🦁', Colors.amber, 120),
+  CardReward('เบงกอลซูเปอร์โนวาประกายเพชร', 'Super Rare 🥇', '✨🐆', Colors.pink, 135),
+  CardReward('ไซบีเรียนพายุสุริยะ', 'Super Rare 🥇', '☀️🐈', Colors.deepOrange, 150),
+  CardReward('แบล็คโฮลคิตตี้ (ตำนานแห่งความมืด)', 'Secret Rare 💎🔥', '🕳️🐈‍⬛', Color(0xFF111111), 250),
 ];
 
 // ฟังก์ชันแกะค่าโบนัส ATK และ HP
@@ -143,7 +170,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Widget แสดงผลรูปโปรไฟล์ (รองรับทั้ง Emoji, URL และ Base64)
+// Widget แสดงผลรูปโปรไฟล์
 Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize = 24, String frame = ''}) {
   bool isUrl = avatar.startsWith('http://') || avatar.startsWith('https://');
   bool isBase64 = avatar.startsWith('data:image');
@@ -290,14 +317,14 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
 }
 
 // ==========================================
-// 3D Animated Pet Character Widget (เอาเงาและฐานออกตามต้องการ)
+// 3D Animated Pet Character Widget
 // ==========================================
 class PetCharacter3DWidget extends StatefulWidget {
   final String petType;
   final String equippedWeapon;
   final String equippedHat;
   final double size;
-  final bool showHeartEffect; // สำหรับเอฟเฟคหัวใจตอนให้อาหาร
+  final bool showHeartEffect;
 
   const PetCharacter3DWidget({
     super.key,
@@ -435,6 +462,128 @@ class _PetCharacter3DWidgetState extends State<PetCharacter3DWidget> with Single
   }
 }
 
+// 🌟 Widget ดีไซน์การ์ดพรีเมียม (ป้องกันการล้นจอ 100% ด้วย Expanded + FittedBox)
+class PremiumMeowCardWidget extends StatelessWidget {
+  final String emoji;
+  final String name;
+  final String rarity;
+  final String power;
+
+  const PremiumMeowCardWidget({
+    super.key,
+    required this.emoji,
+    required this.name,
+    required this.rarity,
+    required this.power,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    List<Color> bgGradient = [const Color(0xFF1e293b), const Color(0xFF0f172a)];
+    Color borderColor = Colors.blueGrey;
+    Color glowColor = Colors.transparent;
+
+    if (rarity.contains('Rare') && !rarity.contains('Super') && !rarity.contains('Secret')) {
+      bgGradient = [const Color(0xFF3b82f6), const Color(0xFF1e1b4b)];
+      borderColor = Colors.cyanAccent;
+      glowColor = Colors.cyan.withOpacity(0.3);
+    } else if (rarity.contains('Super')) {
+      bgGradient = [const Color(0xFFd97706), const Color(0xFF78350f)];
+      borderColor = Colors.amberAccent;
+      glowColor = Colors.amber.withOpacity(0.4);
+    } else if (rarity.contains('Secret')) {
+      bgGradient = [const Color(0xFF7f1d1d), const Color(0xFF18181b)];
+      borderColor = Colors.redAccent;
+      glowColor = Colors.redAccent.withOpacity(0.5);
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: bgGradient,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor, width: 2),
+        boxShadow: [
+          BoxShadow(color: glowColor, blurRadius: 6, spreadRadius: 1),
+          const BoxShadow(color: Colors.black38, blurRadius: 4, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        child: Column(
+          children: [
+            // 1. ป้ายระดับความหายากด้านบน
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black45,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: borderColor.withOpacity(0.5), width: 1),
+              ),
+              child: Text(
+                rarity,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: borderColor, fontSize: 9, fontWeight: FontWeight.bold),
+              ),
+            ),
+            
+            // 2. อิโมจิขนาดใหญ่ตรงกลาง (ย่อ/ขยายตามพื้นที่ ป้องกันล้น 100%)
+            Expanded(
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: const BoxDecoration(
+                    color: Colors.black38,
+                    shape: BoxShape.circle,
+                  ),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      emoji,
+                      style: const TextStyle(fontSize: 36),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // 3. ชื่อการ์ดและค่า Power ด้านล่างสุด
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10.5),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '⚡ Power: $power',
+                    style: const TextStyle(color: Colors.amberAccent, fontSize: 9.5, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // บันทึกคลิก: เลเวลอัป + สัตว์เลี้ยงได้ EXP + นับภารกิจ
 Future<void> registerUserUpdateAction(BuildContext? context, {String? collectionName}) async {
   final user = FirebaseAuth.instance.currentUser;
@@ -469,7 +618,6 @@ Future<void> registerUserUpdateAction(BuildContext? context, {String? collection
       curScore += bonusScore;
     }
 
-    // อัปเดต EXP สัตว์เลี้ยง (+5 EXP ต่องาน)
     Map<String, dynamic> petData = {};
     if (userData['pet'] is Map) {
       petData = Map<String, dynamic>.from(userData['pet']);
@@ -479,7 +627,7 @@ Future<void> registerUserUpdateAction(BuildContext? context, {String? collection
         'type': '🐱',
         'level': 1,
         'exp': 0,
-        'hp': 100, // ค่า HP เริ่มต้น
+        'hp': 100,
         'equippedWeapon': '🐟 ปลากรอบในตำนาน (+15 ATK)',
         'equippedHat': '🎀 โบชมพู (+20 HP)',
       };
@@ -674,6 +822,7 @@ class _AuthScreenState extends State<AuthScreen> {
           'frame': '',
           'unlockedTitles': [],
           'unlockedFrames': [],
+          'cardInventory': [],
           'buffX2Until': null,
           'email': email,
           'streakCount': 0,
@@ -910,6 +1059,7 @@ class _MainScreenState extends State<MainScreen> {
             globalUserFrame = data['frame'] ?? '';
             globalUnlockedTitles = List<String>.from(data['unlockedTitles'] ?? []);
             globalUnlockedFrames = List<String>.from(data['unlockedFrames'] ?? []);
+            globalCardInventory = List<dynamic>.from(data['cardInventory'] ?? []);
 
             if (globalUserTitle.isNotEmpty && !globalUnlockedTitles.contains(globalUserTitle)) {
               globalUnlockedTitles.add(globalUserTitle);
@@ -1980,7 +2130,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
             return Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisSize: dynamicSize,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
@@ -2594,6 +2744,8 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
   }
 }
 
+const dynamicSize = MainAxisSize.min;
+
 // ==========================================
 // TableGrid
 // ==========================================
@@ -2706,7 +2858,6 @@ class TableGrid extends StatelessWidget {
     );
   }
 }
-
 // ==========================================
 // FloorPlanCard
 // ==========================================
@@ -3595,7 +3746,7 @@ class LastUpdateWidget extends StatelessWidget {
 }
 
 // ==========================================
-// Lucky Wheel Dialog & Painter (Standard 20 & VIP 100)
+// Lucky Wheel Dialog
 // ==========================================
 class LuckyWheelDialog extends StatefulWidget {
   final int currentScore;
@@ -3623,7 +3774,6 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
   String? _resultText;
   int _selectedWheelIndex = 0;
 
-  // 🎡 ตู้ที่ 1: ตู้คลาสสิก (20 แต้ม)
   final List<_WheelReward> standardRewards = const [
     _WheelReward('JACKPOT +500 แต้ม! 💥', '+500 💥', Color(0xFFFF1493), 'jackpot', 500),
     _WheelReward('🏆 สุ่มกรอบโปรไฟล์ (เงิน/ลม/มืด/Challenger)', 'สุ่มกรอบ 🖼️', Colors.deepPurple, 'sub_frame_random_normal', null),
@@ -3642,7 +3792,6 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
     _WheelReward('กุญแจกล่องสุ่ม (50-200 แต้ม) 🎁', 'กล่องสุ่ม 🎁', Color(0xFF9C27B0), 'mystery_key', null),
   ];
 
-  // 💎 ตู้ที่ 2: ตู้ High Roller VIP (100 แต้ม)
   final List<_WheelReward> premiumRewards = const [
     _WheelReward('SUPER JACKPOT +2,000 แต้ม! 🌟', '+2000 🌟', Color(0xFFFFD700), 'jackpot', 2000),
     _WheelReward('🪽 กรอบโปรไฟล์: "ปีกแห่งแสง"', 'กรอบปีก 🪽', Colors.amberAccent, 'vip_frame', 'wing'),
@@ -4150,7 +4299,313 @@ class _WheelPainter extends CustomPainter {
 }
 
 // ==========================================
-// LeaderboardScreen (จัดวาง 3 แท็บสมดุลกึ่งกลาง)
+// 🌌 หน้าต่างเปิดซองการ์ดอวกาศ (Card Pack Dialog)
+// ==========================================
+class CardPackOpeningDialog extends StatefulWidget {
+  final int currentScore;
+  const CardPackOpeningDialog({super.key, required this.currentScore});
+
+  @override
+  State<CardPackOpeningDialog> createState() => _CardPackOpeningDialogState();
+}
+
+class _CardPackOpeningDialogState extends State<CardPackOpeningDialog> with SingleTickerProviderStateMixin {
+  bool _isOpening = false;
+  bool _isRevealing = false;
+  List<CardReward> _pulledCards = [];
+  int _currentIndex = 0;
+  bool _cardFlipped = false;
+  late AnimationController _shakeController;
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+  }
+
+  @override
+  void dispose() {
+    _shakeController.dispose();
+    super.dispose();
+  }
+
+  void _openCardPack() async {
+    if (globalUserScore < 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('คุณต้องการคะแนนอย่างน้อย 200 แต้มเพื่อเปิดซองการ์ดนี้!')),
+      );
+      return;
+    }
+
+    setState(() => _isOpening = true);
+    _shakeController.repeat(reverse: true);
+
+    await Future.delayed(const Duration(milliseconds: 1800));
+    _shakeController.stop();
+
+    final random = Random();
+    List<CardReward> results = [];
+    
+    for (int i = 0; i < 3; i++) {
+      double roll = random.nextDouble() * 100;
+      List<CardReward> pool = [];
+      if (roll < 60) {
+        pool = galaxyMeowCards.where((c) => c.rarity.contains('Common')).toList();
+      } else if (roll < 85) {
+        pool = galaxyMeowCards.where((c) => c.rarity.contains('Rare')).toList();
+      } else if (roll < 97) {
+        pool = galaxyMeowCards.where((c) => c.rarity.contains('Super Rare')).toList();
+      } else {
+        pool = galaxyMeowCards.where((c) => c.rarity.contains('Secret')).toList();
+      }
+      if (pool.isEmpty) pool = galaxyMeowCards;
+      results.add(pool[random.nextInt(pool.length)]);
+    }
+
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? globalUserId;
+    globalUserScore = max(0, globalUserScore - 200);
+
+    List<String> cardDataList = results.map((c) => '${c.emoji}|${c.name}|${c.rarity}|${c.power}').toList();
+
+    if (currentUid.isNotEmpty) {
+      await FirebaseFirestore.instance.collection('users').doc(currentUid).set({
+        'score': globalUserScore,
+        'cardInventory': FieldValue.arrayUnion(cardDataList),
+      }, SetOptions(merge: true));
+    }
+
+    setState(() {
+      _isOpening = false;
+      _isRevealing = true;
+      _pulledCards = results;
+      _currentIndex = 0;
+      _cardFlipped = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: const Color(0xFF1A1A2E),
+      contentPadding: const EdgeInsets.all(20),
+      content: SizedBox(
+        width: 300,
+        height: 380,
+        child: !_isRevealing
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('🌌 ซองการ์ด Celestial Meow', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  const Text('สุ่มการ์ดแมวอวกาศ 3 ใบ (ราคา 200 แต้ม)', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 20),
+                  
+                  AnimatedBuilder(
+                    animation: _shakeController,
+                    builder: (context, child) {
+                      double offset = _isOpening ? sin(_shakeController.value * pi * 8) * 6 : 0;
+                      return Transform.translate(
+                        offset: Offset(offset, 0),
+                        child: Container(
+                          width: 140,
+                          height: 190,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF8A2387), Color(0xFFE94057), Color(0xFFF27121)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: const [BoxShadow(color: Colors.purpleAccent, blurRadius: 16, spreadRadius: 2)],
+                          ),
+                          child: const Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text('🐱✨', style: TextStyle(fontSize: 40)),
+                                SizedBox(height: 8),
+                                Text('GALAXY PACK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1.5, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  Text('คะแนนคงเหลือ: $globalUserScore แต้ม', style: const TextStyle(color: Colors.amberAccent, fontSize: 12)),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber,
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: _isOpening ? null : _openCardPack,
+                      child: Text(_isOpening ? 'กำลังฉีกซอง... 📦' : 'เปิดซอง (200 แต้ม)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    ),
+                  ),
+                ],
+              )
+            : Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('การ์ดใบที่ ${_currentIndex + 1} จาก 3', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: () => setState(() => _cardFlipped = true),
+                    child: SizedBox(
+                      width: 170,
+                      height: 240,
+                      child: _cardFlipped
+                          ? PremiumMeowCardWidget(
+                              emoji: _pulledCards[_currentIndex].emoji,
+                              name: _pulledCards[_currentIndex].name,
+                              rarity: _pulledCards[_currentIndex].rarity,
+                              power: _pulledCards[_currentIndex].power.toString(),
+                            )
+                          : Container(
+                              decoration: BoxDecoration(
+                                color: Colors.indigo[900],
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: Colors.amber, width: 2.5),
+                              ),
+                              child: const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text('❓', style: TextStyle(fontSize: 42)),
+                                  SizedBox(height: 8),
+                                  Text('แตะเพื่อเปิดการ์ด!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (_cardFlipped)
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
+                        onPressed: () {
+                          if (_currentIndex < _pulledCards.length - 1) {
+                            setState(() {
+                              _currentIndex++;
+                              _cardFlipped = false;
+                            });
+                          } else {
+                            Navigator.pop(context);
+                          }
+                        },
+                        child: Text(_currentIndex < _pulledCards.length - 1 ? 'เปิดใบถัดไป ➡️' : 'เสร็จสิ้น ✨', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    )
+                  else
+                    const Text('แตะที่การ์ดเพื่อเปิดดูผลลัพธ์', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// 🖼️ หน้าต่างแสดงคลังการ์ดสะสม (Card Inventory Dialog)
+// ==========================================
+class CardInventoryDialog extends StatelessWidget {
+  const CardInventoryDialog({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text('🖼️ คลังการ์ดสะสมของคุณ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 320,
+        height: 440,
+        child: globalCardInventory.isEmpty
+            ? const Center(child: Text('ยังไม่มีการ์ดในคลัง\n(เปิดซองการ์ดเพื่อสะสม!)', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 14)))
+            : GridView.builder(
+                shrinkWrap: true,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 0.68,
+                ),
+                itemCount: globalCardInventory.length,
+                itemBuilder: (context, index) {
+                  final rawText = globalCardInventory[index].toString();
+                  final parts = rawText.split('|');
+                  
+                  String emoji = '🐱';
+                  String name = rawText;
+                  String rarity = 'Common';
+                  String power = '50';
+
+                  if (parts.length >= 4) {
+                    emoji = parts[0];
+                    name = parts[1];
+                    rarity = parts[2];
+                    power = parts[3];
+                  } else {
+                    name = rawText;
+                    if (rawText.contains('Super Rare')) {
+                      rarity = 'Super Rare 🥇';
+                      emoji = '👑🦁';
+                      power = '120';
+                    } else if (rawText.contains('Rare')) {
+                      rarity = 'Rare 🥈';
+                      emoji = '🛸🐈';
+                      power = '80';
+                    } else if (rawText.contains('Secret')) {
+                      rarity = 'Secret Rare 💎🔥';
+                      emoji = '🕳️🐈‍⬛';
+                      power = '250';
+                    } else {
+                      rarity = 'Common 🥉';
+                      emoji = '🐱🪐';
+                      power = '50';
+                    }
+                  }
+
+                  return PremiumMeowCardWidget(
+                    emoji: emoji,
+                    name: name,
+                    rarity: rarity,
+                    power: power,
+                  );
+                },
+              ),
+      ),
+      actions: [
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('ปิด', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    );
+  }
+}
+
+// ==========================================
+// LeaderboardScreen (3 แท็บมาตรฐาน + ปุ่มเปิดซองและคลังการ์ดใต้ร้านค้า)
 // ==========================================
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -4162,7 +4617,7 @@ class LeaderboardScreen extends StatefulWidget {
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   bool _isFeeding = false;
   bool _isGachaSpinning = false;
-  bool _showHeart = false; // ตัวควบคุมเอฟเฟคหัวใจตอนให้อาหาร
+  bool _showHeart = false;
 
   Future<void> _sendHeartToUser(String targetDocId, String targetUserName) async {
     if (targetDocId == globalUserId) return;
@@ -4195,7 +4650,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 
     try {
       final currentTimestamp = Timestamp.now();
-
       await targetUserRef.update({'hearts': FieldValue.increment(1)});
 
       final mySnap = await myUserRef.get();
@@ -4263,6 +4717,20 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     showDialog(
       context: context,
       builder: (context) => LuckyWheelDialog(currentScore: myScore),
+    );
+  }
+
+  void _openCardPackDialog(int myScore) {
+    showDialog(
+      context: context,
+      builder: (context) => CardPackOpeningDialog(currentScore: myScore),
+    );
+  }
+
+  void _openCardInventoryDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => const CardInventoryDialog(),
     );
   }
 
@@ -4335,7 +4803,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     }
   }
 
-  // ฟังก์ชันสุ่มกาชาไอเทมสัตว์เลี้ยง (50 แต้ม)
   void _spinPetGacha() async {
     if (_isGachaSpinning) return;
     _isGachaSpinning = true;
@@ -4392,7 +4859,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     }
   }
 
-  // ฟังก์ชันให้อาหารสัตว์เลี้ยง (+20 EXP, ฟื้นฟู HP +10, มีเอฟเฟคหัวใจ)
   void _feedPet() async {
     if (_isFeeding) return;
     _isFeeding = true;
@@ -4425,7 +4891,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         int pLevel = (petData['level'] is num) ? (petData['level'] as num).toInt() : 1;
         int pHp = (petData['hp'] is num) ? (petData['hp'] as num).toInt() : 100;
         
-        // คำนวณ HP สูงสุดพื้นฐาน + โบนัสหมวก
         final String hat = petData['equippedHat'] ?? '';
         int maxHp = 80 + (pLevel * 20) + getItemBonusHp(hat);
 
@@ -4436,7 +4901,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           maxHp = 80 + (pLevel * 20) + getItemBonusHp(hat);
         }
 
-        // ฟื้นฟู HP ทีละ 10 แต่ไม่เกิน Max HP
         pHp = min(maxHp, pHp + 10);
 
         newLevel = pLevel;
@@ -4450,7 +4914,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         });
       });
 
-      // เปิดเอฟเฟคหัวใจ
       setState(() => _showHeart = true);
       Timer(const Duration(milliseconds: 900), () {
         if (mounted) setState(() => _showHeart = false);
@@ -4477,7 +4940,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     }
   }
 
-  // ไดอะล็อกเปลี่ยนชื่อ & เลือกเปลี่ยนชนิดสัตว์เลี้ยง 18 ชนิด
   void _showEditPetCustomizationDialog() {
     final nameCtrl = TextEditingController(text: globalUserPet['name'] ?? 'น้องนำโชค');
     String selectedType = globalUserPet['type'] ?? '🐱';
@@ -4560,7 +5022,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     );
   }
 
-  // ประลองสัตว์เลี้ยง Pet Battle PvP (ถ้าแพ้ HP จะลดลงตามดาเมจที่หักลบกัน)
   void _startPetBattle(String enemyId, String enemyName, Map<String, dynamic> enemyPet) async {
     final myPetName = globalUserPet['name'] ?? 'น้องนำโชค';
     final myPetType = globalUserPet['type'] ?? '🐱';
@@ -4582,13 +5043,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     final int turnsToDefeatMe = (myHp / max(1, enemyTotalAtk)).ceil();
     final bool isIWin = turnsToDefeatEnemy <= turnsToDefeatMe;
 
-    // คำนวณ HP ที่เหลือหลังจากการต่อสู้
     int damageTaken = 0;
     if (!isIWin) {
       damageTaken = max(5, enemyTotalAtk - myTotalAtk);
       myHp = max(0, myHp - damageTaken);
       
-      // อัปเดต HP ของเราลง Firestore ทันทีที่แพ้
       final updatedPet = Map<String, dynamic>.from(globalUserPet);
       updatedPet['hp'] = myHp;
       await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'pet': updatedPet});
@@ -4665,10 +5124,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 3, // 📌 3 แท็บตามเดิม
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Leaderboard, Pet & Shop 🏆', style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text('Rank, Pet & Shop 🏆', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           backgroundColor: Colors.amber[700],
           foregroundColor: Colors.white,
           bottom: const TabBar(
@@ -4703,6 +5162,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 globalLastHeartSent = d['lastHeartSent'] != null ? Map<String, dynamic>.from(d['lastHeartSent']) : {};
                 globalUserPet = d['pet'] != null ? Map<String, dynamic>.from(d['pet']) : {};
                 globalPetInventory = List<dynamic>.from(d['petInventory'] ?? []);
+                globalCardInventory = List<dynamic>.from(d['cardInventory'] ?? []);
                 break;
               }
             }
@@ -4803,7 +5263,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                         },
                       ),
 
-                // แท็บ 2: สัตว์เลี้ยง 3D + เลี้ยงดู + ตู้กาชาไอเทม (50 แต้ม)
+                // แท็บ 2: สัตว์เลี้ยง
                 ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
@@ -4925,7 +5385,64 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // การ์ดตู้กาชาสัตว์เลี้ยง (50 แต้ม)
+                    // 🏆 Pet Level Leaderboard (ลบคำว่า "สูงสุดในทีม" ออกแล้ว)
+                    Card(
+                      elevation: 3,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.leaderboard, color: Colors.deepOrange, size: 22),
+                                SizedBox(width: 8),
+                                Text('🏆 อันดับเลเวลสัตว์เลี้ยง', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                              ],
+                            ),
+                            const Divider(height: 16),
+                            SizedBox(
+                              height: 140,
+                              child: ListView.builder(
+                                itemCount: users.length,
+                                itemBuilder: (context, idx) {
+                                  final uData = users[idx].data() as Map<String, dynamic>;
+                                  final uName = uData['name'] ?? 'Staff';
+                                  final pMap = uData['pet'] is Map ? uData['pet'] as Map<String, dynamic> : {};
+                                  final pType = pMap['type'] ?? '🐱';
+                                  final pName = pMap['name'] ?? 'สัตว์เลี้ยง';
+                                  final pLvl = (pMap['level'] is num) ? (pMap['level'] as num).toInt() : 1;
+
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 3),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text('${idx + 1}. ', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12)),
+                                            Text('$pType $pName ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                            Text('($uName)', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                          ],
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                          decoration: BoxDecoration(color: Colors.orange[100], borderRadius: BorderRadius.circular(8)),
+                                          child: Text('Lv.$pLvl', style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.bold, fontSize: 12)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
                     Card(
                       elevation: 3,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -5012,7 +5529,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   ],
                 ),
 
-                // แท็บ 3: ร้านค้า & Lucky Wheel (แสดงกรอบครบ 12 แบบ)
+                // แท็บ 3: ร้านค้า & วงล้อ (ย้ายแบนเนอร์ซองสุ่มการ์ดและปุ่มดูคลังการ์ดมาไว้ใต้ Lucky Wheel)
                 ListView(
                   padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 80),
                   children: [
@@ -5083,6 +5600,66 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                           ],
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // 📦 แบนเนอร์เปิดซองการ์ดอวกาศ (ย้ายมาไว้ใต้ Lucky Wheel)
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF8A2387), Color(0xFFE94057), Color(0xFFF27121)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const CircleAvatar(
+                              radius: 28,
+                              backgroundColor: Colors.white24,
+                              child: Text('📦', style: TextStyle(fontSize: 30)),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Text('ซองการ์ด Celestial Meow ✨', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                                  SizedBox(height: 4),
+                                  Text('เปิดซองสุ่มการ์ดแมวอวกาศ 3 ใบ (ราคา 200 แต้ม)', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                                ],
+                              ),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.amber,
+                                foregroundColor: Colors.black87,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              ),
+                              onPressed: () => _openCardPackDialog(myCurrentScore),
+                              child: const Text('เปิดซอง', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // 🖼️ ปุ่มกดเปิดดูคลังการ์ดสะสม
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: Colors.purple[700]!, width: 1.5),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: _openCardInventoryDialog,
+                      icon: const Icon(Icons.style, color: Colors.purple),
+                      label: Text('🖼️ ดูคลังการ์ดสะสมของคุณ (${globalCardInventory.length} ใบ)', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.purple[900], fontSize: 15)),
                     ),
                     const SizedBox(height: 20),
 
