@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:math';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -14,7 +16,7 @@ String globalUserId = '';
 String globalUserName = '';
 String globalUserAvatar = '🐱';
 String globalUserTitle = '';
-String globalUserFrame = ''; // 'gold', 'neon', 'rainbow', 'fire', 'ice', ''
+String globalUserFrame = '';
 List<String> globalUnlockedTitles = [];
 List<String> globalUnlockedFrames = [];
 Timestamp? globalBuffX2Until;
@@ -24,6 +26,69 @@ int globalUserScore = 0;
 int globalUserHearts = 0;
 int globalUserShields = 0;
 Map<String, dynamic> globalLastHeartSent = {};
+Map<String, dynamic> globalUserPet = {};
+List<dynamic> globalPetInventory = [];
+
+// รายชื่อสัตว์เลี้ยง 18 ชนิด (เพิ่มแรคคูน 🦝)
+const List<Map<String, String>> petTypesList = [
+  {'type': '🐱', 'name': 'แมว'},
+  {'type': '🐶', 'name': 'หมา'},
+  {'type': '🐔', 'name': 'ไก่'},
+  {'type': '🐦', 'name': 'นก'},
+  {'type': '🦒', 'name': 'ยีราฟ'},
+  {'type': '🐷', 'name': 'หมู'},
+  {'type': '🐹', 'name': 'หนู'},
+  {'type': '🦆', 'name': 'เป็ด'},
+  {'type': '🦛', 'name': 'ฮิปโป'},
+  {'type': '🐵', 'name': 'ลิง'},
+  {'type': '🐹', 'name': 'แฮมสเตอร์'},
+  {'type': '🦇', 'name': 'ค้างคาว'},
+  {'type': '🦄', 'name': 'ยูนิคอร์น'},
+  {'type': '🦊', 'name': 'จิ้งจอก'},
+  {'type': '🦖', 'name': 'ไดโนเสาร์'},
+  {'type': '🐬', 'name': 'ปลาโลมา'},
+  {'type': '🐢', 'name': 'เต่า'},
+  {'type': '🦝', 'name': 'แรคคูน'},
+];
+
+// รายการไอเทมในตู้กาชาสัตว์เลี้ยง (16 ชนิด)
+const List<Map<String, dynamic>> petGachaDatabase = [
+  {'name': '⚡ ดาบสายฟ้า Challenger (+50 ATK)', 'type': 'weapon', 'atk': 50, 'hp': 0},
+  {'name': '🔱 ตรีศูลเจ้าสมุทร (+45 ATK)', 'type': 'weapon', 'atk': 45, 'hp': 0},
+  {'name': '⚔️ ดาบคาตานะเพลิง (+40 ATK)', 'type': 'weapon', 'atk': 40, 'hp': 0},
+  {'name': '🪄 คทาเวทมนตร์ดวงดาว (+35 ATK)', 'type': 'weapon', 'atk': 35, 'hp': 0},
+  {'name': '🥊 นวมมังกรทอง (+30 ATK)', 'type': 'weapon', 'atk': 30, 'hp': 0},
+  {'name': '🏹 ธนูเอลฟ์สายลม (+28 ATK)', 'type': 'weapon', 'atk': 28, 'hp': 0},
+  {'name': '🪓 ขวานไวกิ้งโบราณ (+25 ATK)', 'type': 'weapon', 'atk': 25, 'hp': 0},
+  {'name': '🐟 ปลากรอบในตำนาน (+15 ATK)', 'type': 'weapon', 'atk': 15, 'hp': 0},
+  {'name': '👑 มงกุฎทองคำจักรพรรดิ (+100 HP)', 'type': 'hat', 'atk': 0, 'hp': 100},
+  {'name': '🪖 หมวกเกราะอัศวิน (+80 HP)', 'type': 'hat', 'atk': 0, 'hp': 80},
+  {'name': '🥽 แว่นส่องมิติ (+70 HP)', 'type': 'hat', 'atk': 0, 'hp': 70},
+  {'name': '🕶️ แว่นกันแดดนีออน (+60 HP)', 'type': 'hat', 'atk': 0, 'hp': 60},
+  {'name': '🌸 มงกุฎดอกไม้ภูติ (+55 HP)', 'type': 'hat', 'atk': 0, 'hp': 55},
+  {'name': '🎀 โบว์รุ้งประกาย (+50 HP)', 'type': 'hat', 'atk': 0, 'hp': 50},
+  {'name': '🎧 หูฟังเกมมิ่งเรืองแสง (+45 HP)', 'type': 'hat', 'atk': 0, 'hp': 45},
+  {'name': '🎀 โบชมพู (+20 HP)', 'type': 'hat', 'atk': 0, 'hp': 20},
+];
+
+// ฟังก์ชันแกะค่าโบนัส ATK และ HP
+int getItemBonusAtk(String itemName) {
+  if (itemName.isEmpty || itemName == 'ไม่มี') return 0;
+  final match = RegExp(r'\+(\d+)\s*ATK').firstMatch(itemName);
+  if (match != null) {
+    return int.tryParse(match.group(1) ?? '0') ?? 0;
+  }
+  return 0;
+}
+
+int getItemBonusHp(String itemName) {
+  if (itemName.isEmpty || itemName == 'ไม่มี') return 0;
+  final match = RegExp(r'\+(\d+)\s*HP').firstMatch(itemName);
+  if (match != null) {
+    return int.tryParse(match.group(1) ?? '0') ?? 0;
+  }
+  return 0;
+}
 
 // คลังอิโมจิโปรไฟล์ 60+ แบบ
 const List<String> avatarList = [
@@ -78,9 +143,23 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Widget สำหรับแสดงผลรูปโปรไฟล์ (รองรับ นีออน / ทอง / สีรุ้ง / เปลวไฟ / น้ำแข็ง)
+// Widget แสดงผลรูปโปรไฟล์ (รองรับทั้ง Emoji, URL และ Base64)
 Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize = 24, String frame = ''}) {
   bool isUrl = avatar.startsWith('http://') || avatar.startsWith('https://');
+  bool isBase64 = avatar.startsWith('data:image');
+
+  ImageProvider? bgImage;
+  if (isUrl) {
+    bgImage = NetworkImage(avatar);
+  } else if (isBase64) {
+    try {
+      final base64String = avatar.split(',').last;
+      final bytes = base64Decode(base64String);
+      bgImage = MemoryImage(bytes);
+    } catch (_) {
+      bgImage = null;
+    }
+  }
   
   BoxDecoration? frameDecoration;
   if (frame == 'gold') {
@@ -127,13 +206,76 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
         BoxShadow(color: Colors.white, blurRadius: 4, spreadRadius: 0.5),
       ],
     );
+  } else if (frame == 'challenger') {
+    frameDecoration = const BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: SweepGradient(
+        colors: [Colors.amber, Colors.purpleAccent, Colors.cyanAccent, Colors.amber],
+      ),
+      boxShadow: [
+        BoxShadow(color: Colors.purpleAccent, blurRadius: 10, spreadRadius: 2),
+        BoxShadow(color: Colors.amberAccent, blurRadius: 6, spreadRadius: 1),
+      ],
+    );
+  } else if (frame == 'wing') {
+    frameDecoration = const BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: LinearGradient(colors: [Colors.amber, Colors.white, Colors.amberAccent]),
+      boxShadow: [
+        BoxShadow(color: Colors.amberAccent, blurRadius: 12, spreadRadius: 3),
+        BoxShadow(color: Colors.white, blurRadius: 6, spreadRadius: 1),
+      ],
+    );
+  } else if (frame == 'aura') {
+    frameDecoration = const BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: SweepGradient(colors: [Colors.deepPurple, Colors.indigoAccent, Colors.purpleAccent, Colors.deepPurple]),
+      boxShadow: [
+        BoxShadow(color: Colors.purpleAccent, blurRadius: 12, spreadRadius: 2.5),
+      ],
+    );
+  } else if (frame == 'sparkle') {
+    frameDecoration = const BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: LinearGradient(colors: [Colors.pinkAccent, Colors.amberAccent, Colors.purpleAccent]),
+      boxShadow: [
+        BoxShadow(color: Colors.pinkAccent, blurRadius: 10, spreadRadius: 2),
+        BoxShadow(color: Colors.yellowAccent, blurRadius: 4, spreadRadius: 1),
+      ],
+    );
+  } else if (frame == 'silver') {
+    frameDecoration = BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: Colors.blueGrey[200]!, width: 3),
+      boxShadow: [
+        BoxShadow(color: Colors.blueGrey[300]!, blurRadius: 8, spreadRadius: 1.5),
+        const BoxShadow(color: Colors.white70, blurRadius: 4, spreadRadius: 0.5),
+      ],
+    );
+  } else if (frame == 'wind') {
+    frameDecoration = const BoxDecoration(
+      shape: BoxShape.circle,
+      gradient: SweepGradient(colors: [Colors.tealAccent, Colors.greenAccent, Colors.teal, Colors.tealAccent]),
+      boxShadow: [
+        BoxShadow(color: Colors.tealAccent, blurRadius: 8, spreadRadius: 2),
+      ],
+    );
+  } else if (frame == 'dark') {
+    frameDecoration = BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: Colors.purple[900]!, width: 3),
+      boxShadow: const [
+        BoxShadow(color: Colors.black87, blurRadius: 10, spreadRadius: 3),
+        BoxShadow(color: Colors.deepPurple, blurRadius: 6, spreadRadius: 1),
+      ],
+    );
   }
 
   Widget circle = CircleAvatar(
     radius: radius,
     backgroundColor: Colors.blue[50],
-    backgroundImage: isUrl ? NetworkImage(avatar) : null,
-    child: !isUrl ? Text(avatar, style: TextStyle(fontSize: fontSize)) : null,
+    backgroundImage: bgImage,
+    child: (bgImage == null && !isUrl && !isBase64) ? Text(avatar, style: TextStyle(fontSize: fontSize)) : null,
   );
 
   if (frameDecoration != null) {
@@ -147,49 +289,249 @@ Widget buildUserAvatarWidget(String avatar, {double radius = 24, double fontSize
   return circle;
 }
 
-// ระบบบันทึกคลิก: ครบ 100 คลิก เลเวลอัปและรับโบนัส +50 แต้ม (บัฟ x2 ได้ +100 แต้ม) พร้อมบันทึก Daily Quest 1
-Future<void> registerUserUpdateAction(BuildContext? context) async {
+// ==========================================
+// 3D Animated Pet Character Widget (เอาเงาและฐานออกตามต้องการ)
+// ==========================================
+class PetCharacter3DWidget extends StatefulWidget {
+  final String petType;
+  final String equippedWeapon;
+  final String equippedHat;
+  final double size;
+  final bool showHeartEffect; // สำหรับเอฟเฟคหัวใจตอนให้อาหาร
+
+  const PetCharacter3DWidget({
+    super.key,
+    required this.petType,
+    required this.equippedWeapon,
+    required this.equippedHat,
+    this.size = 180,
+    this.showHeartEffect = false,
+  });
+
+  @override
+  State<PetCharacter3DWidget> createState() => _PetCharacter3DWidgetState();
+}
+
+class _PetCharacter3DWidgetState extends State<PetCharacter3DWidget> with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  late Animation<double> _floatAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+
+    _floatAnimation = Tween<double>(begin: -6.0, end: 6.0).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeInOutSine),
+    );
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
+  }
+
+  String _extractEmoji(String text) {
+    if (text.isEmpty || text == 'ไม่มี') return '';
+    final runes = text.runes.toList();
+    if (runes.isNotEmpty) {
+      return String.fromCharCode(runes.first);
+    }
+    return '';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hatEmoji = _extractEmoji(widget.equippedHat);
+    final weaponEmoji = _extractEmoji(widget.equippedWeapon);
+
+    return SizedBox(
+      width: widget.size,
+      height: widget.size,
+      child: Stack(
+        alignment: Alignment.center,
+        clipBehavior: Clip.none,
+        children: [
+          AnimatedBuilder(
+            animation: _floatAnimation,
+            builder: (context, child) {
+              return Transform.translate(
+                offset: Offset(0, _floatAnimation.value),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    Text(
+                      widget.petType,
+                      style: TextStyle(
+                        fontSize: widget.size * 0.44,
+                        shadows: const [
+                          Shadow(color: Colors.black26, offset: Offset(2, 4), blurRadius: 4),
+                        ],
+                      ),
+                    ),
+                    if (hatEmoji.isNotEmpty && hatEmoji != '🐟')
+                      Positioned(
+                        top: -widget.size * 0.12,
+                        child: Transform.rotate(
+                          angle: -0.1,
+                          child: Text(
+                            hatEmoji,
+                            style: TextStyle(
+                              fontSize: widget.size * 0.22,
+                              shadows: const [
+                                Shadow(color: Colors.black26, offset: Offset(2, 3), blurRadius: 4),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (weaponEmoji.isNotEmpty)
+                      Positioned(
+                        right: -widget.size * 0.14,
+                        bottom: widget.size * 0.08,
+                        child: Transform.rotate(
+                          angle: 0.25,
+                          child: Text(
+                            weaponEmoji,
+                            style: TextStyle(
+                              fontSize: widget.size * 0.24,
+                              shadows: const [
+                                Shadow(color: Colors.black38, offset: Offset(2, 4), blurRadius: 5),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+          if (widget.showHeartEffect)
+            Positioned(
+              top: -10,
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0.0, end: 1.0),
+                duration: const Duration(milliseconds: 800),
+                builder: (context, val, child) {
+                  return Opacity(
+                    opacity: 1.0 - val,
+                    child: Transform.translate(
+                      offset: Offset(0, -30 * val),
+                      child: const Text('💖', style: TextStyle(fontSize: 32)),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// บันทึกคลิก: เลเวลอัป + สัตว์เลี้ยงได้ EXP + นับภารกิจ
+Future<void> registerUserUpdateAction(BuildContext? context, {String? collectionName}) async {
   final user = FirebaseAuth.instance.currentUser;
   final currentUid = user?.uid ?? globalUserId;
-  if (currentUid.isEmpty) {
-    debugPrint('⚠️ ไม่พบ User ID สำหรับบันทึกแต้ม');
-    return;
-  }
+  if (currentUid.isEmpty) return;
   globalUserId = currentUid;
 
   final userDocRef = FirebaseFirestore.instance.collection('users').doc(currentUid);
   final today = getTodayKey();
 
   try {
+    final userSnap = await userDocRef.get();
+    final userData = userSnap.data() ?? {};
+
     bool isBuffActive = globalBuffX2Until != null && globalBuffX2Until!.toDate().isAfter(DateTime.now());
 
-    globalUserUpdateCount += 1;
+    int curUpdateCount = (userData['updateCount'] is num) ? (userData['updateCount'] as num).toInt() : 0;
+    int curLevel = (userData['level'] is num) ? (userData['level'] as num).toInt() : 1;
+    int curScore = (userData['score'] is num) ? (userData['score'] as num).toInt() : 0;
 
+    curUpdateCount += 1;
     int gainedLevels = 0;
     int bonusScore = 0;
 
-    if (globalUserUpdateCount >= 100) {
-      gainedLevels = globalUserUpdateCount ~/ 100;
-      globalUserUpdateCount = globalUserUpdateCount % 100;
-      globalUserLevel += gainedLevels;
+    if (curUpdateCount >= 100) {
+      gainedLevels = curUpdateCount ~/ 100;
+      curUpdateCount = curUpdateCount % 100;
+      curLevel += gainedLevels;
 
       int baseBonus = 50;
       bonusScore = isBuffActive ? (baseBonus * 2 * gainedLevels) : (baseBonus * gainedLevels);
-      globalUserScore += bonusScore;
+      curScore += bonusScore;
     }
 
-    Map<String, dynamic> updateData = {
-      'updateCount': FieldValue.increment(1),
-      'dailyQuests.$today.tableUpdates': FieldValue.increment(1),
+    // อัปเดต EXP สัตว์เลี้ยง (+5 EXP ต่องาน)
+    Map<String, dynamic> petData = {};
+    if (userData['pet'] is Map) {
+      petData = Map<String, dynamic>.from(userData['pet']);
+    } else {
+      petData = {
+        'name': 'น้องนำโชค',
+        'type': '🐱',
+        'level': 1,
+        'exp': 0,
+        'hp': 100, // ค่า HP เริ่มต้น
+        'equippedWeapon': '🐟 ปลากรอบในตำนาน (+15 ATK)',
+        'equippedHat': '🎀 โบชมพู (+20 HP)',
+      };
+    }
+
+    int pExp = (petData['exp'] is num) ? (petData['exp'] as num).toInt() + 5 : 5;
+    int pLevel = (petData['level'] is num) ? (petData['level'] as num).toInt() : 1;
+
+    while (pExp >= 100) {
+      pExp -= 100;
+      pLevel += 1;
+    }
+    petData['exp'] = pExp;
+    petData['level'] = pLevel;
+
+    Map<String, dynamic> allDailyQuests = {};
+    if (userData['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(userData['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[today] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[today]);
+    }
+
+    int currentTableUpdates = (todayQuest['tableUpdates'] is num) ? (todayQuest['tableUpdates'] as num).toInt() : 0;
+    todayQuest['tableUpdates'] = currentTableUpdates + 1;
+
+    if (collectionName != null) {
+      List<dynamic> updatedFloors = (todayQuest['updatedFloors'] is List) ? List.from(todayQuest['updatedFloors']) : [];
+      if (!updatedFloors.contains(collectionName)) {
+        updatedFloors.add(collectionName);
+      }
+      todayQuest['updatedFloors'] = updatedFloors;
+    }
+
+    allDailyQuests[today] = todayQuest;
+
+    Map<String, dynamic> finalUpdate = {
+      'updateCount': curUpdateCount,
+      'level': curLevel,
+      'score': curScore,
+      'pet': petData,
+      'dailyQuests': allDailyQuests,
     };
 
-    if (gainedLevels > 0) {
-      updateData['level'] = FieldValue.increment(gainedLevels);
-      updateData['score'] = FieldValue.increment(bonusScore);
-      updateData['updateCount'] = globalUserUpdateCount;
-    }
+    await userDocRef.set(finalUpdate, SetOptions(merge: true));
 
-    await userDocRef.set(updateData, SetOptions(merge: true));
+    globalUserUpdateCount = curUpdateCount;
+    globalUserLevel = curLevel;
+    globalUserScore = curScore;
+    globalUserPet = petData;
 
     if (gainedLevels > 0 && context != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -214,7 +556,42 @@ Future<void> registerUserUpdateAction(BuildContext? context) async {
       );
     }
   } catch (e) {
-    debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล: $e');
+    debugPrint('เกิดข้อผิดพลาดในการบันทึกเลเวล/ภารกิจ: $e');
+  }
+}
+
+// บันทึกภารกิจ
+Future<void> recordCustomDailyQuest(String questKey, dynamic value) async {
+  final currentUid = FirebaseAuth.instance.currentUser?.uid ?? globalUserId;
+  if (currentUid.isEmpty) return;
+  final today = getTodayKey();
+  final userRef = FirebaseFirestore.instance.collection('users').doc(currentUid);
+
+  try {
+    final snap = await userRef.get();
+    final data = snap.data() ?? {};
+
+    Map<String, dynamic> allDailyQuests = {};
+    if (data['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(data['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[today] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[today]);
+    }
+
+    if (value is int && todayQuest[questKey] is num) {
+      todayQuest[questKey] = (todayQuest[questKey] as num).toInt() + value;
+    } else {
+      todayQuest[questKey] = value;
+    }
+
+    allDailyQuests[today] = todayQuest;
+
+    await userRef.set({'dailyQuests': allDailyQuests}, SetOptions(merge: true));
+  } catch (e) {
+    debugPrint('Error recording custom quest ($questKey): $e');
   }
 }
 
@@ -235,13 +612,16 @@ class _AuthScreenState extends State<AuthScreen> {
   final _nameController = TextEditingController();
   String _selectedAvatar = '🐱';
   File? _pickedImageFile;
+  String? _pickedImageBase64;
   bool _isLoading = false;
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 500, maxHeight: 500, imageQuality: 80);
+    final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 300, maxHeight: 300, imageQuality: 70);
     if (picked != null) {
+      final bytes = await picked.readAsBytes();
       setState(() {
+        _pickedImageBase64 = base64Encode(bytes);
         _pickedImageFile = File(picked.path);
       });
     }
@@ -276,10 +656,8 @@ class _AuthScreenState extends State<AuthScreen> {
         final uid = res.user!.uid;
         String finalAvatar = _selectedAvatar;
 
-        if (_pickedImageFile != null) {
-          final ref = FirebaseStorage.instance.ref().child('user_avatars').child('$uid.jpg');
-          await ref.putFile(_pickedImageFile!);
-          finalAvatar = await ref.getDownloadURL();
+        if (_pickedImageBase64 != null) {
+          finalAvatar = 'data:image/jpeg;base64,$_pickedImageBase64';
         }
 
         await FirebaseFirestore.instance.collection('users').doc(uid).set({
@@ -301,6 +679,16 @@ class _AuthScreenState extends State<AuthScreen> {
           'streakCount': 0,
           'lastCheckInDate': '',
           'dailyQuests': {},
+          'pet': {
+            'name': 'น้องนำโชค',
+            'type': '🐱',
+            'level': 1,
+            'exp': 0,
+            'hp': 100,
+            'equippedWeapon': '🐟 ปลากรอบในตำนาน (+15 ATK)',
+            'equippedHat': '🎀 โบชมพู (+20 HP)',
+          },
+          'petInventory': ['🐟 ปลากรอบในตำนาน (+15 ATK)', '🎀 โบชมพู (+20 HP)'],
         });
       }
     } on FirebaseAuthException catch (e) {
@@ -359,8 +747,10 @@ class _AuthScreenState extends State<AuthScreen> {
                         CircleAvatar(
                           radius: 32,
                           backgroundColor: Colors.blue[50],
-                          backgroundImage: _pickedImageFile != null ? FileImage(_pickedImageFile!) : null,
-                          child: _pickedImageFile == null
+                          backgroundImage: _pickedImageBase64 != null 
+                              ? MemoryImage(base64Decode(_pickedImageBase64!)) 
+                              : (_pickedImageFile != null ? FileImage(_pickedImageFile!) : null),
+                          child: (_pickedImageBase64 == null && _pickedImageFile == null)
                               ? Text(_selectedAvatar, style: const TextStyle(fontSize: 32))
                               : null,
                         ),
@@ -389,11 +779,12 @@ class _AuthScreenState extends State<AuthScreen> {
                             runSpacing: 8,
                             alignment: WrapAlignment.center,
                             children: avatarList.map((avatar) {
-                              final isSelected = avatar == _selectedAvatar && _pickedImageFile == null;
+                              final isSelected = avatar == _selectedAvatar && _pickedImageFile == null && _pickedImageBase64 == null;
                               return GestureDetector(
                                 onTap: () => setState(() {
                                   _selectedAvatar = avatar;
                                   _pickedImageFile = null;
+                                  _pickedImageBase64 = null;
                                 }),
                                 child: Container(
                                   width: 40,
@@ -534,6 +925,8 @@ class _MainScreenState extends State<MainScreen> {
             globalUserHearts = (data['hearts'] is num) ? (data['hearts'] as num).toInt() : 0;
             globalUserShields = (data['shields'] is num) ? (data['shields'] as num).toInt() : 0;
             globalLastHeartSent = data['lastHeartSent'] != null ? Map<String, dynamic>.from(data['lastHeartSent']) : {};
+            globalUserPet = data['pet'] != null ? Map<String, dynamic>.from(data['pet']) : {};
+            globalPetInventory = List<dynamic>.from(data['petInventory'] ?? []);
           });
         }
       });
@@ -553,6 +946,7 @@ class _MainScreenState extends State<MainScreen> {
     String selectedTitle = globalUserTitle;
     String selectedFrame = globalUserFrame;
     File? newPickedFile;
+    String? newPickedFileBase64;
     bool isSaving = false;
 
     showDialog(
@@ -575,27 +969,13 @@ class _MainScreenState extends State<MainScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          newPickedFile != null
+                          newPickedFileBase64 != null
                               ? Container(
-                                  decoration: selectedFrame == 'gold'
-                                      ? BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.amber[600]!, width: 3))
-                                      : selectedFrame == 'neon'
-                                          ? BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.cyanAccent, width: 3))
-                                          : selectedFrame == 'rainbow'
-                                              ? const BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  gradient: SweepGradient(colors: [Colors.red, Colors.orange, Colors.yellow, Colors.green, Colors.blue, Colors.purple, Colors.red]),
-                                                )
-                                              : selectedFrame == 'fire'
-                                                  ? const BoxDecoration(
-                                                      shape: BoxShape.circle,
-                                                      gradient: LinearGradient(colors: [Colors.deepOrange, Colors.orangeAccent, Colors.redAccent]),
-                                                    )
-                                                  : selectedFrame == 'ice'
-                                                      ? BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.lightBlueAccent, width: 3))
-                                                      : null,
                                   padding: const EdgeInsets.all(3),
-                                  child: CircleAvatar(radius: 28, backgroundImage: FileImage(newPickedFile!)),
+                                  child: CircleAvatar(
+                                    radius: 28, 
+                                    backgroundImage: MemoryImage(base64Decode(newPickedFileBase64!)),
+                                  ),
                                 )
                               : buildUserAvatarWidget(selectedAvatar, radius: 28, fontSize: 28, frame: selectedFrame),
                           const SizedBox(width: 12),
@@ -606,12 +986,14 @@ class _MainScreenState extends State<MainScreen> {
                                     final picker = ImagePicker();
                                     final picked = await picker.pickImage(
                                       source: ImageSource.gallery,
-                                      maxWidth: 500,
-                                      maxHeight: 500,
-                                      imageQuality: 80,
+                                      maxWidth: 300,
+                                      maxHeight: 300,
+                                      imageQuality: 70,
                                     );
                                     if (picked != null) {
+                                      final bytes = await picked.readAsBytes();
                                       setDialogState(() {
+                                        newPickedFileBase64 = base64Encode(bytes);
                                         newPickedFile = File(picked.path);
                                       });
                                     }
@@ -638,13 +1020,14 @@ class _MainScreenState extends State<MainScreen> {
                               runSpacing: 8,
                               alignment: WrapAlignment.center,
                               children: avatarList.map((avatar) {
-                                final isSelected = avatar == selectedAvatar && newPickedFile == null;
+                                final isSelected = avatar == selectedAvatar && newPickedFile == null && newPickedFileBase64 == null;
                                 return GestureDetector(
                                   onTap: isSaving
                                       ? null
                                       : () => setDialogState(() {
                                             selectedAvatar = avatar;
                                             newPickedFile = null;
+                                            newPickedFileBase64 = null;
                                           }),
                                   child: Container(
                                     width: 38,
@@ -693,45 +1076,84 @@ class _MainScreenState extends State<MainScreen> {
                               label: const Text('💎 นีออน'),
                               selected: selectedFrame == 'neon',
                               selectedColor: Colors.cyan[100],
-                              onSelected: (selected) {
-                                setDialogState(() => selectedFrame = selected ? 'neon' : '');
-                              },
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'neon' : ''),
                             ),
                           if (globalUnlockedFrames.contains('gold'))
                             ChoiceChip(
                               label: const Text('👑 ทองคำ'),
                               selected: selectedFrame == 'gold',
                               selectedColor: Colors.amber[100],
-                              onSelected: (selected) {
-                                setDialogState(() => selectedFrame = selected ? 'gold' : '');
-                              },
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'gold' : ''),
                             ),
                           if (globalUnlockedFrames.contains('rainbow'))
                             ChoiceChip(
                               label: const Text('🌈 สีรุ้ง'),
                               selected: selectedFrame == 'rainbow',
                               selectedColor: Colors.purple[100],
-                              onSelected: (selected) {
-                                setDialogState(() => selectedFrame = selected ? 'rainbow' : '');
-                              },
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'rainbow' : ''),
                             ),
                           if (globalUnlockedFrames.contains('fire'))
                             ChoiceChip(
                               label: const Text('🔥 เปลวไฟ'),
                               selected: selectedFrame == 'fire',
                               selectedColor: Colors.deepOrange[100],
-                              onSelected: (selected) {
-                                setDialogState(() => selectedFrame = selected ? 'fire' : '');
-                              },
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'fire' : ''),
                             ),
                           if (globalUnlockedFrames.contains('ice'))
                             ChoiceChip(
                               label: const Text('❄️ น้ำแข็ง'),
                               selected: selectedFrame == 'ice',
                               selectedColor: Colors.lightBlue[100],
-                              onSelected: (selected) {
-                                setDialogState(() => selectedFrame = selected ? 'ice' : '');
-                              },
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'ice' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('challenger'))
+                            ChoiceChip(
+                              label: const Text('🏆 Challenger Aura ⚡'),
+                              selected: selectedFrame == 'challenger',
+                              selectedColor: Colors.purple[100],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'challenger' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('silver'))
+                            ChoiceChip(
+                              label: const Text('🥈 สีเงิน'),
+                              selected: selectedFrame == 'silver',
+                              selectedColor: Colors.blueGrey[100],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'silver' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('wind'))
+                            ChoiceChip(
+                              label: const Text('🍃 สายลม'),
+                              selected: selectedFrame == 'wind',
+                              selectedColor: Colors.teal[100],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'wind' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('dark'))
+                            ChoiceChip(
+                              label: const Text('🌑 ธาตุมืด'),
+                              selected: selectedFrame == 'dark',
+                              selectedColor: Colors.grey[400],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'dark' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('wing'))
+                            ChoiceChip(
+                              label: const Text('🪽 มีปีก'),
+                              selected: selectedFrame == 'wing',
+                              selectedColor: Colors.amber[100],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'wing' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('aura'))
+                            ChoiceChip(
+                              label: const Text('🔮 ออร่า'),
+                              selected: selectedFrame == 'aura',
+                              selectedColor: Colors.purple[100],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'aura' : ''),
+                            ),
+                          if (globalUnlockedFrames.contains('sparkle'))
+                            ChoiceChip(
+                              label: const Text('✨ วิ้งๆ'),
+                              selected: selectedFrame == 'sparkle',
+                              selectedColor: Colors.pink[100],
+                              onSelected: (selected) => setDialogState(() => selectedFrame = selected ? 'sparkle' : ''),
                             ),
                         ],
                       ),
@@ -755,9 +1177,7 @@ class _MainScreenState extends State<MainScreen> {
                                       label: Text(t),
                                       selected: selectedTitle == t,
                                       selectedColor: Colors.amber[200],
-                                      onSelected: (selected) {
-                                        setDialogState(() => selectedTitle = selected ? t : '');
-                                      },
+                                      onSelected: (selected) => setDialogState(() => selectedTitle = selected ? t : ''),
                                     )),
                               ],
                             ),
@@ -784,13 +1204,8 @@ class _MainScreenState extends State<MainScreen> {
                           try {
                             String finalAvatar = selectedAvatar;
 
-                            if (newPickedFile != null) {
-                              final ref = FirebaseStorage.instance
-                                  .ref()
-                                  .child('user_avatars')
-                                  .child('$globalUserId.jpg');
-                              await ref.putFile(newPickedFile!);
-                              finalAvatar = await ref.getDownloadURL();
+                            if (newPickedFileBase64 != null) {
+                              finalAvatar = 'data:image/jpeg;base64,$newPickedFileBase64';
                             }
 
                             await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
@@ -856,7 +1271,7 @@ class _MainScreenState extends State<MainScreen> {
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.table_restaurant), label: 'ผังโต๊ะ'),
-          BottomNavigationBarItem(icon: Icon(Icons.leaderboard), label: 'Leaderboard & Shop'),
+          BottomNavigationBarItem(icon: Icon(Icons.leaderboard), label: 'Rank, Pet & Shop'),
         ],
       ),
     );
@@ -864,7 +1279,7 @@ class _MainScreenState extends State<MainScreen> {
 }
 
 // ==========================================
-// DailyQuestsScreen (กล่องสุ่ม 10-60 แต้ม)
+// DailyQuestsScreen
 // ==========================================
 class DailyQuestsScreen extends StatefulWidget {
   const DailyQuestsScreen({super.key});
@@ -897,7 +1312,6 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
       streakCount = 1;
     }
 
-    // กล่องสุ่มแต้ม 10 ถึง 60 แต้ม
     final random = Random();
     final int mysteryPoints = 10 + random.nextInt(51); 
     int totalGainedPoints = mysteryPoints;
@@ -906,30 +1320,40 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
       totalGainedPoints += 100;
     }
 
-    final batch = FirebaseFirestore.instance.batch();
     final userRef = FirebaseFirestore.instance.collection('users').doc(globalUserId);
+    final userSnap = await userRef.get();
+    final myData = userSnap.data() ?? {};
 
-    batch.update(userRef, {
-      'streakCount': streakCount,
-      'lastCheckInDate': todayKey,
-      'score': FieldValue.increment(totalGainedPoints),
-    });
+    Map<String, dynamic> allDailyQuests = {};
+    if (myData['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(myData['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[todayKey] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[todayKey]);
+    }
 
     final firstCheckInDoc = await FirebaseFirestore.instance.collection('app_settings').doc('first_checkin_$todayKey').get();
     bool isFirstCheckInToday = false;
     if (!firstCheckInDoc.exists) {
       isFirstCheckInToday = true;
-      batch.set(FirebaseFirestore.instance.collection('app_settings').doc('first_checkin_$todayKey'), {
+      await FirebaseFirestore.instance.collection('app_settings').doc('first_checkin_$todayKey').set({
         'userId': globalUserId,
         'userName': globalUserName,
         'time': Timestamp.now(),
       });
-      batch.set(userRef, {
-        'dailyQuests.$todayKey.isFirstCheckIn': true,
-      }, SetOptions(merge: true));
+      todayQuest['isFirstCheckIn'] = true;
     }
 
-    await batch.commit();
+    allDailyQuests[todayKey] = todayQuest;
+
+    await userRef.set({
+      'streakCount': streakCount,
+      'lastCheckInDate': todayKey,
+      'score': FieldValue.increment(totalGainedPoints),
+      'dailyQuests': allDailyQuests,
+    }, SetOptions(merge: true));
 
     if (mounted) {
       showDialog(
@@ -963,7 +1387,7 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
               ],
               if (isFirstCheckInToday) ...[
                 const SizedBox(height: 8),
-                const Text('🏆 คุณเป็นคนแรกของวัน! (สำเร็จเควส 4 แล้ว)', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
+                const Text('🏆 คุณเป็นคนแรกของวัน! (สำเร็จภารกิจราชาเปิดร้านแล้ว)', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
               ],
               const SizedBox(height: 12),
               Text('สะสม Streak ต่อเนื่อง: $streakCount วันติด 🔥', style: const TextStyle(color: Colors.black54, fontSize: 13)),
@@ -983,10 +1407,25 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
 
   Future<void> _claimQuestReward(String questKey, int rewardScore) async {
     final userRef = FirebaseFirestore.instance.collection('users').doc(globalUserId);
+    final userSnap = await userRef.get();
+    final myData = userSnap.data() ?? {};
+
+    Map<String, dynamic> allDailyQuests = {};
+    if (myData['dailyQuests'] is Map) {
+      allDailyQuests = Map<String, dynamic>.from(myData['dailyQuests']);
+    }
+
+    Map<String, dynamic> todayQuest = {};
+    if (allDailyQuests[todayKey] is Map) {
+      todayQuest = Map<String, dynamic>.from(allDailyQuests[todayKey]);
+    }
+
+    todayQuest['claimed_$questKey'] = true;
+    allDailyQuests[todayKey] = todayQuest;
 
     await userRef.set({
       'score': FieldValue.increment(rewardScore),
-      'dailyQuests.$todayKey.claimed_$questKey': true,
+      'dailyQuests': allDailyQuests,
     }, SetOptions(merge: true));
 
     if (mounted) {
@@ -1020,24 +1459,51 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
           final int streakCount = (userData['streakCount'] is num) ? (userData['streakCount'] as num).toInt() : 0;
           final isCheckedInToday = lastCheckInDate == todayKey;
 
-          final dailyQuestsMap = (userData['dailyQuests'] != null && userData['dailyQuests'][todayKey] != null)
-              ? Map<String, dynamic>.from(userData['dailyQuests'][todayKey])
-              : <String, dynamic>{};
+          final rawDaily = userData['dailyQuests'];
+          Map<String, dynamic> dailyQuestsMap = {};
+          if (rawDaily is Map && rawDaily[todayKey] is Map) {
+            dailyQuestsMap = Map<String, dynamic>.from(rawDaily[todayKey]);
+          }
 
           final int tableUpdates = (dailyQuestsMap['tableUpdates'] is num) ? (dailyQuestsMap['tableUpdates'] as num).toInt() : 0;
-          final List<dynamic> heartSentUsers = List.from(dailyQuestsMap['heartSentUsers'] ?? []);
+          final List<dynamic> heartSentUsers = (dailyQuestsMap['heartSentUsers'] is List) ? List.from(dailyQuestsMap['heartSentUsers']) : [];
           final int heartSentTotal = (dailyQuestsMap['heartSentTotal'] is num) ? (dailyQuestsMap['heartSentTotal'] as num).toInt() : 0;
           final bool isFirstCheckIn = dailyQuestsMap['isFirstCheckIn'] == true;
+          final bool hasUpdatedDailyNote = dailyQuestsMap['hasUpdatedDailyNote'] == true;
+          final int wheelSpinCount = (dailyQuestsMap['wheelSpinCount'] is num) ? (dailyQuestsMap['wheelSpinCount'] as num).toInt() : 0;
+          final bool hasChattedToday = dailyQuestsMap['hasChattedToday'] == true;
+          final List<dynamic> updatedFloors = (dailyQuestsMap['updatedFloors'] is List) ? List.from(dailyQuestsMap['updatedFloors']) : [];
 
           final bool q1Claimed = dailyQuestsMap['claimed_q1'] == true;
           final bool q2Claimed = dailyQuestsMap['claimed_q2'] == true;
           final bool q3Claimed = dailyQuestsMap['claimed_q3'] == true;
           final bool q4Claimed = dailyQuestsMap['claimed_q4'] == true;
+          final bool qNewsClaimed = dailyQuestsMap['claimed_q_news'] == true;
+          final bool qSpinClaimed = dailyQuestsMap['claimed_q_spin'] == true;
+          final bool qChatClaimed = dailyQuestsMap['claimed_q_chat'] == true;
+          final bool qFloorsClaimed = dailyQuestsMap['claimed_q_floors'] == true;
+          final bool qMasterClaimed = dailyQuestsMap['claimed_q_master'] == true;
 
           final bool q1Completed = tableUpdates >= 30;
           final bool q2Completed = heartSentUsers.length >= 5;
           final bool q3Completed = heartSentTotal >= 20;
           final bool q4Completed = isFirstCheckIn;
+          final bool qNewsCompleted = hasUpdatedDailyNote;
+          final bool qSpinCompleted = wheelSpinCount >= 1;
+          final bool qChatCompleted = hasChattedToday;
+          final bool qFloorsCompleted = updatedFloors.contains('tables_f1') && updatedFloors.contains('tables_f2') && updatedFloors.contains('tables_f3');
+
+          final otherCompletedQuests = [
+            q1Completed,
+            q2Completed,
+            q3Completed,
+            q4Completed,
+            qNewsCompleted,
+            qSpinCompleted,
+            qChatCompleted,
+            qFloorsCompleted,
+          ].where((c) => c).length;
+          final bool qMasterCompleted = otherCompletedQuests >= 4;
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -1154,7 +1620,58 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
               const SizedBox(height: 12),
 
               _buildQuestCard(
-                title: 'เควส 1: อัปเดตโต๊ะครบ 30 ครั้ง',
+                title: '⭐ All-Clear Master (ภารกิจใหญ่)',
+                subtitle: 'ทำภารกิจรายวันอื่นๆ สำเร็จอย่างน้อย 4 ภารกิจ ($otherCompletedQuests/4)',
+                progress: min(1.0, otherCompletedQuests / 4.0),
+                rewardText: '+20 แต้ม',
+                rewardScore: 20,
+                isCompleted: qMasterCompleted,
+                isClaimed: qMasterClaimed,
+                onClaim: () => _claimQuestReward('q_master', 20),
+                isHighlight: true,
+              ),
+              _buildQuestCard(
+                title: '🏃 สายตรวจครบทุกชั้น',
+                subtitle: 'อัปเดตสถานะโต๊ะในชั้น 1, ชั้น 2 และชั้น 3 (${updatedFloors.length}/3 ชั้น)',
+                progress: min(1.0, updatedFloors.length / 3.0),
+                rewardText: '+10 แต้ม',
+                rewardScore: 10,
+                isCompleted: qFloorsCompleted,
+                isClaimed: qFloorsClaimed,
+                onClaim: () => _claimQuestReward('q_floors', 10),
+              ),
+              _buildQuestCard(
+                title: '📌 ผู้ช่วยกระจายข่าว',
+                subtitle: hasUpdatedDailyNote ? 'อัปเดตประกาศสำคัญประจำวันแล้ว' : 'กดแก้ไขหรืออัปเดตประกาศสำคัญประจำวัน 1 ครั้ง',
+                progress: hasUpdatedDailyNote ? 1.0 : 0.0,
+                rewardText: '+5 แต้ม',
+                rewardScore: 5,
+                isCompleted: qNewsCompleted,
+                isClaimed: qNewsClaimed,
+                onClaim: () => _claimQuestReward('q_news', 5),
+              ),
+              _buildQuestCard(
+                title: '🎰 นักเสี่ยงดวงประจำวัน',
+                subtitle: 'หมุนวงล้อ Lucky Wheel อย่างน้อย 1 ครั้ง ($wheelSpinCount/1)',
+                progress: min(1.0, wheelSpinCount / 1.0),
+                rewardText: '+5 แต้ม',
+                rewardScore: 5,
+                isCompleted: qSpinCompleted,
+                isClaimed: qSpinClaimed,
+                onClaim: () => _claimQuestReward('q_spin', 5),
+              ),
+              _buildQuestCard(
+                title: '💬 ทักทายเพื่อนร่วมงาน',
+                subtitle: hasChattedToday ? 'ส่งข้อความทักทายในแชททีมแล้ว' : 'พิมพ์ข้อความในห้องแชททีม 1 ครั้งในวันนั้น',
+                progress: hasChattedToday ? 1.0 : 0.0,
+                rewardText: '+5 แต้ม',
+                rewardScore: 5,
+                isCompleted: qChatCompleted,
+                isClaimed: qChatClaimed,
+                onClaim: () => _claimQuestReward('q_chat', 5),
+              ),
+              _buildQuestCard(
+                title: '⚡ พนักงานขยันขันแข็ง',
                 subtitle: 'อัปเดตสถานะโต๊ะในร้าน ($tableUpdates/30)',
                 progress: min(1.0, tableUpdates / 30.0),
                 rewardText: '+10 แต้ม',
@@ -1163,9 +1680,8 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
                 isClaimed: q1Claimed,
                 onClaim: () => _claimQuestReward('q1', 10),
               ),
-
               _buildQuestCard(
-                title: 'เควส 2: ส่งกำลังใจให้เพื่อนครบ 5 คน',
+                title: '💖 มิตรภาพกว้างไกล',
                 subtitle: 'ส่งหัวใจให้เพื่อนไม่ซ้ำคน (${heartSentUsers.length}/5)',
                 progress: min(1.0, heartSentUsers.length / 5.0),
                 rewardText: '+5 แต้ม',
@@ -1174,9 +1690,8 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
                 isClaimed: q2Claimed,
                 onClaim: () => _claimQuestReward('q2', 5),
               ),
-
               _buildQuestCard(
-                title: 'เควส 3: ส่งกำลังใจให้เพื่อนครบ 20 ครั้ง',
+                title: '💌 ส่งรักรัวๆ',
                 subtitle: 'ส่งหัวใจรวมทั้งหมดในวันนี้ ($heartSentTotal/20)',
                 progress: min(1.0, heartSentTotal / 20.0),
                 rewardText: '+5 แต้ม',
@@ -1185,9 +1700,8 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
                 isClaimed: q3Claimed,
                 onClaim: () => _claimQuestReward('q3', 5),
               ),
-
               _buildQuestCard(
-                title: 'เควส 4: เช็กชื่อคนแรกของวัน 🏆',
+                title: '🏆 ราชาเปิดร้าน',
                 subtitle: isFirstCheckIn ? 'คุณคือคนแรกที่เช็กชื่อวันนี้!' : 'มีเพื่อนเช็กชื่อคนแรกไปแล้วหรือยังไม่ได้เปิดกล่องสุ่ม',
                 progress: isFirstCheckIn ? 1.0 : 0.0,
                 rewardText: '+10 แต้ม',
@@ -1212,11 +1726,19 @@ class _DailyQuestsScreenState extends State<DailyQuestsScreen> {
     required bool isCompleted,
     required bool isClaimed,
     required VoidCallback onClaim,
+    bool isHighlight = false,
   }) {
     return Card(
-      elevation: 2,
+      elevation: isHighlight ? 4 : 2,
       margin: const EdgeInsets.symmetric(vertical: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      color: isHighlight ? Colors.amber[50] : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isHighlight ? Colors.amber[600]! : Colors.transparent,
+          width: isHighlight ? 1.5 : 0,
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
@@ -1335,6 +1857,8 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                   'updatedAt': Timestamp.now(),
                 });
 
+                await recordCustomDailyQuest('hasUpdatedDailyNote', true);
+
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
               },
               child: const Text('บันทึกประกาศ', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -1356,7 +1880,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
           title: Row(
             children: [
               const Icon(Icons.cleaning_services, color: Colors.blue),
-              const SizedBox(width: 8),
+              SizedBox(width: 8),
               Text('เปลี่ยนสถานะทุกโต๊ะ ($floorName)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             ],
           ),
@@ -1419,7 +1943,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       await batch.commit();
       if (mounted) {
-        registerUserUpdateAction(context);
+        await registerUserUpdateAction(context, collectionName: collectionName);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: targetStatus ? Colors.green[800] : Colors.red[800],
@@ -1559,7 +2083,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
 
       await batch.commit();
       if (mounted) {
-        registerUserUpdateAction(context);
+        await registerUserUpdateAction(context, collectionName: collectionName);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.blue[900],
@@ -1612,7 +2136,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                     'waitingQueue': [],
                   });
                   if (context.mounted) {
-                    registerUserUpdateAction(context);
+                    await registerUserUpdateAction(context, collectionName: _collections[activeIndex]);
                     Navigator.pop(context);
                   }
                 }
@@ -1643,7 +2167,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
             appBar: AppBar(
               title: Row(
                 children: [
-                  // 1. ส่วนแสดงผลชื่อแอปและสถิติส่วนตัว (เลเวล, หลอดคลิก, แต้ม, หัวใจ)
                   StreamBuilder<DocumentSnapshot>(
                     stream: FirebaseFirestore.instance.collection('users').doc(currentUid).snapshots(),
                     builder: (context, snapshot) {
@@ -1688,10 +2211,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                       );
                     },
                   ),
-
                   const SizedBox(width: 8),
-
-                  // 2. Mini Banner ประกาศสำคัญประจำวัน (วางข้างปุ่มดูโต๊ะว่างบน AppBar)
                   Expanded(
                     child: StreamBuilder<DocumentSnapshot>(
                       stream: FirebaseFirestore.instance.collection('app_settings').doc('daily_note').snapshots(),
@@ -1892,7 +2412,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                     },
                   ),
 
-                  // เมนูเปิดหน้า Daily Quests & Mystery Box
                   ListTile(
                     leading: const Icon(Icons.card_giftcard, color: Colors.amber, size: 28),
                     title: const Text('ภารกิจ & กล่องสุ่มประจำวัน 🎁', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
@@ -2033,7 +2552,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                   ),
                   const Divider(height: 24),
                   const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
                     child: Text('ระบบจัดการผังโต๊ะ StarSister Tables', style: TextStyle(color: Colors.grey, fontSize: 13)),
                   ),
                   const SizedBox(height: 20),
@@ -2108,7 +2627,7 @@ class TableGrid extends StatelessWidget {
                 try {
                   await ref.doc(docId).delete();
                   if (context.mounted) {
-                    registerUserUpdateAction(context);
+                    await registerUserUpdateAction(context, collectionName: collectionName);
                     Navigator.pop(context);
                   }
                 } catch (e) {
@@ -2191,7 +2710,7 @@ class TableGrid extends StatelessWidget {
 // ==========================================
 // FloorPlanCard
 // ==========================================
-class FloorPlanCard extends StatelessWidget {
+class FloorPlanCard extends StatefulWidget {
   final String expectedName;
   final bool isCircle;
   final List<QueryDocumentSnapshot> docs;
@@ -2211,24 +2730,31 @@ class FloorPlanCard extends StatelessWidget {
     required this.onDelete,
   });
 
+  @override
+  State<FloorPlanCard> createState() => _FloorPlanCardState();
+}
+
+class _FloorPlanCardState extends State<FloorPlanCard> {
+  bool _isToggling = false;
+
   bool get _isMergeableTable {
-    return collectionName == 'tables_f1' &&
-        (expectedName == 'โต๊ะ 1' ||
-            expectedName == 'โต๊ะ 2' ||
-            expectedName == 'โต๊ะ 3' ||
-            expectedName == 'โต๊ะ 4' ||
-            expectedName == 'โต๊ะ 5');
+    return widget.collectionName == 'tables_f1' &&
+        (widget.expectedName == 'โต๊ะ 1' ||
+            widget.expectedName == 'โต๊ะ 2' ||
+            widget.expectedName == 'โต๊ะ 3' ||
+            widget.expectedName == 'โต๊ะ 4' ||
+            widget.expectedName == 'โต๊ะ 5');
   }
 
   bool get _hasQueueSystem {
-    return expectedName.contains('พูล') || expectedName == 'ห้องกระจก';
+    return widget.expectedName.contains('พูล') || widget.expectedName == 'ห้องกระจก';
   }
 
   void _showMergeDialog(BuildContext context, String currentDocId, String currentName) {
     const mergeableNames = ['โต๊ะ 1', 'โต๊ะ 2', 'โต๊ะ 3', 'โต๊ะ 4', 'โต๊ะ 5'];
     
     final otherAvailableTables = <Map<String, dynamic>>[];
-    for (var doc in docs) {
+    for (var doc in widget.docs) {
       final data = doc.data() as Map<String, dynamic>;
       final name = data['name'] as String? ?? '';
       if (mergeableNames.contains(name) && name != currentName && data['mergedGroupId'] == null) {
@@ -2316,7 +2842,7 @@ class FloorPlanCard extends StatelessWidget {
                               : globalUserName;
 
                           batch.update(
-                            FirebaseFirestore.instance.collection(collectionName).doc(currentDocId),
+                            FirebaseFirestore.instance.collection(widget.collectionName).doc(currentDocId),
                             {
                               'mergedGroupId': newGroupId,
                               'mergedWith': allNamesInGroup,
@@ -2328,7 +2854,7 @@ class FloorPlanCard extends StatelessWidget {
 
                           for (var docId in selectedDocIds) {
                             batch.update(
-                              FirebaseFirestore.instance.collection(collectionName).doc(docId),
+                              FirebaseFirestore.instance.collection(widget.collectionName).doc(docId),
                               {
                                 'mergedGroupId': newGroupId,
                                 'mergedWith': allNamesInGroup,
@@ -2341,7 +2867,7 @@ class FloorPlanCard extends StatelessWidget {
 
                           await batch.commit();
                           if (context.mounted) {
-                            registerUserUpdateAction(context);
+                            await registerUserUpdateAction(context, collectionName: widget.collectionName);
                             Navigator.pop(dialogContext);
                           }
                         },
@@ -2358,7 +2884,7 @@ class FloorPlanCard extends StatelessWidget {
   Future<void> _unmergeTables(BuildContext context, String mergedGroupId) async {
     try {
       final snapshot = await FirebaseFirestore.instance
-          .collection(collectionName)
+          .collection(widget.collectionName)
           .where('mergedGroupId', isEqualTo: mergedGroupId)
           .get();
 
@@ -2382,7 +2908,7 @@ class FloorPlanCard extends StatelessWidget {
 
       await batch.commit();
       if (context.mounted) {
-        registerUserUpdateAction(context);
+        await registerUserUpdateAction(context, collectionName: widget.collectionName);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('✂️ แยกโต๊ะเรียบร้อยแล้ว'), backgroundColor: Colors.blue),
         );
@@ -2395,7 +2921,7 @@ class FloorPlanCard extends StatelessWidget {
   Future<void> _toggleMergedGroupAvailability(BuildContext context, String mergedGroupId, bool currentStatus) async {
     try {
       final snapshot = await FirebaseFirestore.instance
-          .collection(collectionName)
+          .collection(widget.collectionName)
           .where('mergedGroupId', isEqualTo: mergedGroupId)
           .get();
 
@@ -2416,7 +2942,7 @@ class FloorPlanCard extends StatelessWidget {
       }
 
       await batch.commit();
-      if (context.mounted) registerUserUpdateAction(context);
+      if (context.mounted) await registerUserUpdateAction(context, collectionName: widget.collectionName);
     } catch (e) {
       debugPrint('Toggle error: $e');
     }
@@ -2459,7 +2985,7 @@ class FloorPlanCard extends StatelessWidget {
                 title: const Text('ลบโต๊ะออกจากระบบ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
                 onTap: () {
                   Navigator.pop(context);
-                  onDelete(docId, tableName);
+                  widget.onDelete(docId, tableName);
                 },
               ),
             ],
@@ -2473,7 +2999,7 @@ class FloorPlanCard extends StatelessWidget {
     final List<dynamic> queueList = (data['waitingQueue'] is List) ? List.from(data['waitingQueue']) : [];
     final nameCtrl = TextEditingController();
     final countCtrl = TextEditingController();
-    final bool isGlassRoom = expectedName == 'ห้องกระจก';
+    final bool isGlassRoom = widget.expectedName == 'ห้องกระจก';
 
     showDialog(
       context: context,
@@ -2488,7 +3014,7 @@ class FloorPlanCard extends StatelessWidget {
                     color: Colors.amber[800],
                   ),
                   const SizedBox(width: 8),
-                  Text('คิวรอใช้งาน: $expectedName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  Text('คิวรอใช้งาน: ${widget.expectedName}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 ],
               ),
               content: SizedBox(
@@ -2544,11 +3070,11 @@ class FloorPlanCard extends StatelessWidget {
                                       countCtrl.clear();
                                     });
 
-                                    await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
+                                    await FirebaseFirestore.instance.collection(widget.collectionName).doc(docId).update({
                                       'waitingQueue': queueList,
                                       'lastUpdated': Timestamp.now(),
                                     });
-                                    if (context.mounted) registerUserUpdateAction(context);
+                                    if (context.mounted) await registerUserUpdateAction(context, collectionName: widget.collectionName);
                                   }
                                 },
                                 icon: const Icon(Icons.add, size: 18, color: Colors.white),
@@ -2607,11 +3133,11 @@ class FloorPlanCard extends StatelessWidget {
                                       queueList.removeAt(index);
                                     });
 
-                                    await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
+                                    await FirebaseFirestore.instance.collection(widget.collectionName).doc(docId).update({
                                       'waitingQueue': queueList,
                                       'lastUpdated': Timestamp.now(),
                                     });
-                                    if (context.mounted) registerUserUpdateAction(context);
+                                    if (context.mounted) await registerUserUpdateAction(context, collectionName: widget.collectionName);
                                   },
                                 ),
                               ),
@@ -2638,8 +3164,8 @@ class FloorPlanCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     QueryDocumentSnapshot? targetDoc;
-    for (var doc in docs) {
-      if ((doc.data() as Map<String, dynamic>)['name'] == expectedName) {
+    for (var doc in widget.docs) {
+      if ((doc.data() as Map<String, dynamic>)['name'] == widget.expectedName) {
         targetDoc = doc;
         break;
       }
@@ -2653,27 +3179,30 @@ class FloorPlanCard extends StatelessWidget {
       return Card(
         color: Colors.grey[100],
         elevation: 0,
-        shape: isCircle
+        shape: widget.isCircle
             ? const CircleBorder(side: BorderSide(color: Colors.grey, width: 2, style: BorderStyle.solid))
             : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.grey, width: 2)),
         child: InkWell(
-          customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          onTap: () async {
-            registerUserUpdateAction(context);
-            try {
-              await FirebaseFirestore.instance.collection(collectionName).add({
-                'name': expectedName,
-                'isAvailable': true,
-                'lastUpdated': Timestamp.now(),
-                'updatedBy': userDisplayName,
-                'waitingQueue': [],
-              });
-            } catch (e) {
-              debugPrint('Create table error: $e');
-            }
-          },
+          customBorder: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          onTap: _isToggling
+              ? null
+              : () async {
+                  setState(() => _isToggling = true);
+                  try {
+                    await registerUserUpdateAction(context, collectionName: widget.collectionName);
+                    await FirebaseFirestore.instance.collection(widget.collectionName).add({
+                      'name': widget.expectedName,
+                      'isAvailable': true,
+                      'lastUpdated': Timestamp.now(),
+                      'updatedBy': userDisplayName,
+                      'waitingQueue': [],
+                    });
+                  } finally {
+                    if (mounted) setState(() => _isToggling = false);
+                  }
+                },
           child: Center(
-            child: Text('$expectedName\n(แตะเพื่อสร้าง)', textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 16)),
+            child: Text('${widget.expectedName}\n(แตะเพื่อสร้าง)', textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 16)),
           ),
         ),
       );
@@ -2688,24 +3217,24 @@ class FloorPlanCard extends StatelessWidget {
     final List<dynamic> queueList = (data['waitingQueue'] is List) ? List.from(data['waitingQueue']) : [];
     final Timestamp? ts = data['lastUpdated'];
 
-    if (onlyAvailable && !isAvailable) {
+    if (widget.onlyAvailable && !isAvailable) {
       return Opacity(
         opacity: 0.25,
         child: Card(
           color: Colors.grey[200],
-          shape: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Center(child: Text(expectedName, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))),
+          shape: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Center(child: Text(widget.expectedName, style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.bold))),
         ),
       );
     }
 
-    if (searchQuery.isNotEmpty && !expectedName.toLowerCase().contains(searchQuery.toLowerCase())) {
+    if (widget.searchQuery.isNotEmpty && !widget.expectedName.toLowerCase().contains(widget.searchQuery.toLowerCase())) {
       return Opacity(
         opacity: 0.2,
         child: Card(
           color: Colors.grey[200],
-          shape: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Center(child: Text(expectedName, style: const TextStyle(color: Colors.grey))),
+          shape: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Center(child: Text(widget.expectedName, style: const TextStyle(color: Colors.grey))),
         ),
       );
     }
@@ -2721,7 +3250,7 @@ class FloorPlanCard extends StatelessWidget {
     return Card(
       elevation: mergedGroupId != null ? 6 : 4,
       color: isAvailable ? Colors.green[50] : Colors.red[50],
-      shape: isCircle
+      shape: widget.isCircle
           ? CircleBorder(side: BorderSide(color: isAvailable ? Colors.green : Colors.red, width: 2))
           : RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
@@ -2731,42 +3260,45 @@ class FloorPlanCard extends StatelessWidget {
               ),
             ),
       child: InkWell(
-        customBorder: isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        onTap: () async {
-          registerUserUpdateAction(context);
-
-          try {
-            if (mergedGroupId != null) {
-              await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
-            } else {
-              await FirebaseFirestore.instance.collection(collectionName).doc(docId).update({
-                'isAvailable': !isAvailable,
-                'lastUpdated': Timestamp.now(),
-                'updatedBy': userDisplayName,
-              });
-            }
-          } catch (e) {
-            debugPrint('Error updating table: $e');
-          }
-        },
+        customBorder: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        onTap: _isToggling
+            ? null
+            : () async {
+                setState(() => _isToggling = true);
+                try {
+                  if (mergedGroupId != null) {
+                    await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
+                  } else {
+                    await FirebaseFirestore.instance.collection(widget.collectionName).doc(docId).update({
+                      'isAvailable': !isAvailable,
+                      'lastUpdated': Timestamp.now(),
+                      'updatedBy': userDisplayName,
+                    });
+                    if (context.mounted) await registerUserUpdateAction(context, collectionName: widget.collectionName);
+                  }
+                } finally {
+                  if (mounted) setState(() => _isToggling = false);
+                }
+              },
         onLongPress: () {
           if (_isMergeableTable) {
-            _showTableOptionsBottomSheet(context, docId, expectedName, mergedGroupId);
+            _showTableOptionsBottomSheet(context, docId, widget.expectedName, mergedGroupId);
           } else {
-            onDelete(docId, expectedName);
+            widget.onDelete(docId, widget.expectedName);
           }
         },
         child: Stack(
           alignment: Alignment.center,
           children: [
             Padding(
-              padding: EdgeInsets.symmetric(horizontal: isCircle ? 16.0 : 8.0, vertical: 4.0),
+              padding: EdgeInsets.symmetric(horizontal: widget.isCircle ? 16.0 : 8.0, vertical: 4.0),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    expectedName,
+                    widget.expectedName,
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
                   ),
@@ -2865,9 +3397,6 @@ Widget _buildDoor(String label) {
   );
 }
 
-// ==========================================
-// แผนผังชั้น 1
-// ==========================================
 class CustomFloorPlanF1 extends StatelessWidget {
   final List<QueryDocumentSnapshot> docs;
   final String collectionName;
@@ -2933,7 +3462,7 @@ class CustomFloorPlanF1 extends StatelessWidget {
                   const SizedBox(height: 12),
                   SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 2', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
                   const SizedBox(height: 12),
-                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 3', docs: docs, collectionName: collectionName, onlyAvailable: earlyFloorCardExpectedName(docs, 'โต๊ะ 3', onlyAvailable), searchQuery: searchQuery, onDelete: onDelete)),
+                  SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 3', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
                   const SizedBox(height: 12),
                   SizedBox(height: 110, child: FloorPlanCard(expectedName: 'โต๊ะ 4', docs: docs, collectionName: collectionName, onlyAvailable: onlyAvailable, searchQuery: searchQuery, onDelete: onDelete)),
                   const SizedBox(height: 12),
@@ -2946,8 +3475,6 @@ class CustomFloorPlanF1 extends StatelessWidget {
       ],
     );
   }
-  
-  bool earlyFloorCardExpectedName(List<QueryDocumentSnapshot> docs, String s, bool onlyAvailable) => onlyAvailable;
 }
 
 class CustomFloorPlanF2 extends StatelessWidget {
@@ -3068,7 +3595,7 @@ class LastUpdateWidget extends StatelessWidget {
 }
 
 // ==========================================
-// Lucky Wheel Dialog & Painter (แก้ไขระบบแจกรางวัล & บันทึกประวัติ 100%)
+// Lucky Wheel Dialog & Painter (Standard 20 & VIP 100)
 // ==========================================
 class LuckyWheelDialog extends StatefulWidget {
   final int currentScore;
@@ -3094,12 +3621,16 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
   bool _isSpinning = false;
   double _currentAngle = 0.0;
   String? _resultText;
+  int _selectedWheelIndex = 0;
 
-  final List<_WheelReward> rewards = const [
+  // 🎡 ตู้ที่ 1: ตู้คลาสสิก (20 แต้ม)
+  final List<_WheelReward> standardRewards = const [
     _WheelReward('JACKPOT +500 แต้ม! 💥', '+500 💥', Color(0xFFFF1493), 'jackpot', 500),
-    _WheelReward('กรอบโปรไฟล์ (สุ่ม) 🖼️', 'กรอบ 🖼️', Colors.deepPurple, 'sub_frame', null),
+    _WheelReward('🏆 สุ่มกรอบโปรไฟล์ (เงิน/ลม/มืด/Challenger)', 'สุ่มกรอบ 🖼️', Colors.deepPurple, 'sub_frame_random_normal', null),
     _WheelReward('โล่กันแต้มลด 🛡️', 'โล่ 🛡️', Colors.blueAccent, 'shield', 1),
-    _WheelReward('ฉายาลับใหม่ (สุ่ม) ⭐', 'ฉายา ⭐', Colors.purpleAccent, 'sub_title', null),
+    _WheelReward('👑 ฉายา: "ไร้พ่าย No.1"', 'ไร้พ่าย 👑', Colors.amber, 'fixed_title', 'ไร้พ่าย No.1'),
+    _WheelReward('ฉายา: "Tryhard ตัวจริง"', 'Tryhard 🎯', Colors.purpleAccent, 'fixed_title', 'Tryhard ตัวจริง'),
+    _WheelReward('ฉายา: "นักไต่แรงก์"', 'ไต่แรงก์ ⚔️', Colors.indigoAccent, 'fixed_title', 'นักไต่แรงก์'),
     _WheelReward('บัฟแต้ม x2 (30 นาที) 🔥', 'บัฟ x2', Colors.deepOrange, 'buff', 30),
     _WheelReward('ตั๋วหมุนฟรี 🎟️', 'หมุนฟรี 🎟️', Colors.teal, 'free_spin', 20),
     _WheelReward('โบนัส +100 แต้ม ✨', '+100 ✨', Colors.amber, 'bonus', 100),
@@ -3108,9 +3639,34 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
     _WheelReward('เกลือ 🧂', 'เกลือ 🧂', Colors.grey, 'salt', 0),
     _WheelReward('แย่แล้ว! -2 แต้ม 🔻', '-2 🔻', Color(0xFFEF5350), 'penalty', -2),
     _WheelReward('แย่แล้ว! -6 แต้ม 🔻', '-6 🔻', Color(0xFFE53935), 'penalty', -6),
-    _WheelReward('แย่แล้ว! -10 แต้ม 🔻', '-10 🔻', Color(0xFFC62828), 'penalty', -10),
     _WheelReward('กุญแจกล่องสุ่ม (50-200 แต้ม) 🎁', 'กล่องสุ่ม 🎁', Color(0xFF9C27B0), 'mystery_key', null),
   ];
+
+  // 💎 ตู้ที่ 2: ตู้ High Roller VIP (100 แต้ม)
+  final List<_WheelReward> premiumRewards = const [
+    _WheelReward('SUPER JACKPOT +2,000 แต้ม! 🌟', '+2000 🌟', Color(0xFFFFD700), 'jackpot', 2000),
+    _WheelReward('🪽 กรอบโปรไฟล์: "ปีกแห่งแสง"', 'กรอบปีก 🪽', Colors.amberAccent, 'vip_frame', 'wing'),
+    _WheelReward('🔮 กรอบโปรไฟล์: "ออร่าจักรวาล"', 'กรอบออร่า 🔮', Colors.deepPurpleAccent, 'vip_frame', 'aura'),
+    _WheelReward('✨ กรอบโปรไฟล์: "วิ้งๆ ประกายเพชร"', 'กรอบวิ้ง ✨', Colors.pinkAccent, 'vip_frame', 'sparkle'),
+    _WheelReward('👑 ฉายา: "มหาเศรษฐีตัวจริง"', 'เศรษฐี 💰', Colors.amber, 'fixed_title', 'มหาเศรษฐีตัวจริง'),
+    _WheelReward('ฉายา: "เทพแห่งดวงดาว 🌌"', 'ดวงดาว 🌌', Colors.purple, 'fixed_title', 'เทพแห่งดวงดาว 🌌'),
+    _WheelReward('ฉายา: "พนักงานระดับตำนาน 🌟"', 'ตำนาน 🌟', Colors.deepOrange, 'fixed_title', 'พนักงานระดับตำนาน 🌟'),
+    _WheelReward('โล่ป้องกัน x3 🛡️🛡️🛡️', 'โล่ x3 🛡️', Colors.blue, 'shield_multi', 3),
+    _WheelReward('บัฟแต้ม x2 (2 ชั่วโมง!) 🔥', 'บัฟ 2ชม. 🔥', Colors.redAccent, 'buff', 120),
+    _WheelReward('โบนัสใหญ่ +500 แต้ม ✨', '+500 ✨', Colors.teal, 'bonus', 500),
+    _WheelReward('โบนัส +250 แต้ม 🌟', '+250 🌟', Colors.green, 'bonus', 250),
+    _WheelReward('กล่องสมบัติทองคำ (300-800 แต้ม) 🎁', 'กล่องทอง 🎁', Colors.deepPurpleAccent, 'mystery_key_gold', null),
+    _WheelReward('คืนทุน +100 แต้ม 💸', '+100 💸', Colors.orange, 'bonus', 100),
+    _WheelReward('เกลือพรีเมียมสีชมพู 🧂✨', 'เกลือชมพู 🧂', Color(0xFFB0BEC5), 'salt', 0),
+    _WheelReward('ปลอบใจเบาๆ +10 แต้ม 🥺', '+10 🥺', Color(0xFFCFD8DC), 'bonus', 10),
+    _WheelReward('กลิ่นอายความเค็ม 💨', 'ลมเปล่า 💨', Color(0xFF90A4AE), 'salt', 0),
+    _WheelReward('👑 ฉายา: "ราชาเกลือ VIP 🧂"', 'ราชาเกลือ 🧂', Colors.blueGrey, 'fixed_title', 'ราชาเกลือ VIP 🧂'),
+    _WheelReward('ภาษีความมั่งคั่ง -20 แต้ม 💸🔻', '-20 🔻', Color(0xFFEF5350), 'penalty', -20),
+    _WheelReward('โดนปล้นกลางทาง -50 แต้ม 🏴‍☠️🔻', '-50 🔻', Color(0xFFC62828), 'penalty', -50),
+  ];
+
+  List<_WheelReward> get currentRewards => _selectedWheelIndex == 0 ? standardRewards : premiumRewards;
+  int get currentCost => _selectedWheelIndex == 0 ? 20 : 100;
 
   @override
   void initState() {
@@ -3127,9 +3683,11 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
 
   void _spin() async {
     if (_isSpinning) return;
-    if (globalUserScore < 20) {
+    final cost = currentCost;
+
+    if (globalUserScore < cost) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('คุณต้องการคะแนนอย่างน้อย 20 แต้มเพื่อหมุนวงล้อ')),
+        SnackBar(content: Text('คุณต้องการคะแนนอย่างน้อย $cost แต้มเพื่อหมุนตู้นี้')),
       );
       return;
     }
@@ -3139,7 +3697,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
     setState(() {
       _isSpinning = true;
       _resultText = null;
-      globalUserScore = max(0, globalUserScore - 20);
+      globalUserScore = max(0, globalUserScore - cost);
     });
 
     if (currentUid.isNotEmpty) {
@@ -3148,9 +3706,12 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       }, SetOptions(merge: true)).catchError((e) => debugPrint('Error deduct score: $e'));
     }
 
+    await recordCustomDailyQuest('wheelSpinCount', 1);
+
     final random = Random();
-    final targetIndex = random.nextInt(rewards.length);
-    final sectionAngle = (2 * pi) / rewards.length;
+    final activeList = currentRewards;
+    final targetIndex = random.nextInt(activeList.length);
+    final sectionAngle = (2 * pi) / activeList.length;
 
     final targetSectorAngle = (3 * pi / 2) - (targetIndex * sectionAngle + sectionAngle / 2);
     final totalRotation = (5 * 2 * pi) + targetSectorAngle;
@@ -3165,7 +3726,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
 
     _currentAngle = endAngle % (2 * pi);
 
-    final reward = rewards[targetIndex];
+    final reward = activeList[targetIndex];
     final updateData = <String, dynamic>{};
     String finalRewardLabel = reward.label;
 
@@ -3173,49 +3734,57 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       int finalScore = max(0, globalUserScore + (reward.value as int));
       updateData['score'] = finalScore;
       globalUserScore = finalScore;
-    } else if (reward.type == 'shield') {
-      globalUserShields += 1;
-      updateData['shields'] = FieldValue.increment(1);
-      finalRewardLabel = 'โล่กันแต้มลด 🛡️ (+1 ชิ้นในคลัง)';
-    } else if (reward.type == 'sub_frame') {
-      final subFrames = ['neon', 'gold', 'rainbow', 'fire', 'ice'];
-      final subFrameNames = {
-        'neon': 'กรอบนีออน 💎',
-        'gold': 'กรอบทองคำ 👑',
-        'rainbow': 'กรอบสีรุ้ง 🌈',
-        'fire': 'กรอบเปลวไฟ 🔥',
-        'ice': 'กรอบน้ำแข็ง ❄️',
-      };
-      final pickedFrame = subFrames[random.nextInt(subFrames.length)];
-      final frameName = subFrameNames[pickedFrame]!;
-
-      updateData['frame'] = pickedFrame;
-      updateData['unlockedFrames'] = FieldValue.arrayUnion([pickedFrame]);
-      globalUserFrame = pickedFrame;
-      if (!globalUnlockedFrames.contains(pickedFrame)) globalUnlockedFrames.add(pickedFrame);
-      finalRewardLabel = 'สุ่มได้: $frameName';
-    } else if (reward.type == 'sub_title') {
-      final subTitles = [
-        'ราชาเกลือแห่งปี 🧂',
-        'เซียนพูลหน้ามน 🎱',
-        'ทาสแมวตัวจริง 🐾',
-        'พนักงานดีเด่น ☕',
-        'ดวงดีจัดๆ ⭐',
-        'นักเสี่ยงดวงแห่งปี 🎰',
+    } else if (reward.type == 'shield' || reward.type == 'shield_multi') {
+      int count = reward.value as int;
+      globalUserShields += count;
+      updateData['shields'] = FieldValue.increment(count);
+      finalRewardLabel = 'โล่กันแต้มลด 🛡️ (+$count ชิ้นในคลัง)';
+    } else if (reward.type == 'sub_frame_random_normal') {
+      final normalFrames = [
+        {'id': 'silver', 'name': '🥈 กรอบสีเงินพรีเมียม'},
+        {'id': 'wind', 'name': '🍃 กรอบสายลมวายุ'},
+        {'id': 'dark', 'name': '🌑 กรอบธาตุมืดทมิฬ'},
+        {'id': 'challenger', 'name': '🏆 Challenger Aura ⚡'},
       ];
-      final pickedTitle = subTitles[random.nextInt(subTitles.length)];
+      final picked = normalFrames[random.nextInt(normalFrames.length)];
+      final frameId = picked['id']!;
+      final frameName = picked['name']!;
 
-      updateData['title'] = pickedTitle;
-      updateData['unlockedTitles'] = FieldValue.arrayUnion([pickedTitle]);
-      globalUserTitle = pickedTitle;
-      if (!globalUnlockedTitles.contains(pickedTitle)) globalUnlockedTitles.add(pickedTitle);
-      finalRewardLabel = 'สุ่มได้ฉายา: "$pickedTitle"';
+      updateData['frame'] = frameId;
+      updateData['unlockedFrames'] = FieldValue.arrayUnion([frameId]);
+      globalUserFrame = frameId;
+      if (!globalUnlockedFrames.contains(frameId)) globalUnlockedFrames.add(frameId);
+      finalRewardLabel = 'สุ่มได้กรอบ: $frameName';
+    } else if (reward.type == 'vip_frame') {
+      final frameId = reward.value as String;
+      String frameTitle = '🪽 กรอบมีปีกแห่งแสง';
+      if (frameId == 'aura') frameTitle = '🔮 กรอบออร่าจักรวาล';
+      if (frameId == 'sparkle') frameTitle = '✨ กรอบวิ้งๆ ประกายเพชร';
+
+      updateData['frame'] = frameId;
+      updateData['unlockedFrames'] = FieldValue.arrayUnion([frameId]);
+      globalUserFrame = frameId;
+      if (!globalUnlockedFrames.contains(frameId)) globalUnlockedFrames.add(frameId);
+      finalRewardLabel = 'สุ่มได้กรอบ VIP: $frameTitle';
+    } else if (reward.type == 'fixed_title') {
+      final title = reward.value as String;
+      updateData['title'] = title;
+      updateData['unlockedTitles'] = FieldValue.arrayUnion([title]);
+      globalUserTitle = title;
+      if (!globalUnlockedTitles.contains(title)) globalUnlockedTitles.add(title);
+      finalRewardLabel = 'สุ่มได้ฉายา: "$title"';
     } else if (reward.type == 'mystery_key') {
       final gained = 50 + random.nextInt(151);
       int finalScore = globalUserScore + gained;
       updateData['score'] = finalScore;
       globalUserScore = finalScore;
       finalRewardLabel = 'กุญแจกล่องสุ่ม 🎁 เปิดได้ +$gained แต้ม!';
+    } else if (reward.type == 'mystery_key_gold') {
+      final gained = 300 + random.nextInt(501);
+      int finalScore = globalUserScore + gained;
+      updateData['score'] = finalScore;
+      globalUserScore = finalScore;
+      finalRewardLabel = 'กล่องทองคำ 🎁 เปิดได้ +$gained แต้ม!';
     } else if (reward.type == 'penalty') {
       if (globalUserShields > 0) {
         globalUserShields -= 1;
@@ -3241,10 +3810,10 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       ).catchError((e) => debugPrint('Error updating user data: $e'));
     }
 
-    // บันทึกลง wheel_history ทันที
     FirebaseFirestore.instance.collection('wheel_history').add({
       'userName': globalUserName.isNotEmpty ? globalUserName : 'Staff',
       'userAvatar': globalUserAvatar,
+      'wheelType': _selectedWheelIndex == 0 ? 'Standard' : 'VIP High Roller',
       'rewardLabel': finalRewardLabel,
       'rewardType': reward.type,
       'timestamp': Timestamp.now(),
@@ -3273,22 +3842,13 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                 ),
                 child: Center(
                   child: Text(
-                    reward.type == 'jackpot'
-                        ? '💥'
-                        : reward.type == 'penalty'
-                            ? '🔻'
-                            : reward.type == 'salt'
-                                ? '🧂'
-                                : '🎁',
+                    reward.type == 'jackpot' ? '💥' : (reward.type == 'penalty' ? '🔻' : '🎁'),
                     style: const TextStyle(fontSize: 36),
                   ),
                 ),
               ),
               const SizedBox(height: 14),
-              const Text(
-                'ยินดีด้วย!',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-              ),
+              const Text('ยินดีด้วย!', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,
@@ -3296,9 +3856,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                 decoration: BoxDecoration(
                   color: reward.type == 'penalty' ? Colors.red[50] : Colors.amber[50],
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: reward.type == 'penalty' ? Colors.red[300]! : Colors.amber[400]!,
-                  ),
+                  border: Border.all(color: reward.type == 'penalty' ? Colors.red[300]! : Colors.amber[400]!),
                 ),
                 child: Text(
                   finalRewardLabel,
@@ -3311,10 +3869,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                 ),
               ),
               const SizedBox(height: 12),
-              Text(
-                'แต้มคงเหลือ: $globalUserScore แต้ม',
-                style: const TextStyle(color: Colors.grey, fontSize: 13),
-              ),
+              Text('แต้มคงเหลือ: $globalUserScore แต้ม', style: const TextStyle(color: Colors.grey, fontSize: 13)),
             ],
           ),
           actionsAlignment: MainAxisAlignment.center,
@@ -3323,7 +3878,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
               width: double.infinity,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.purple[700],
+                  backgroundColor: _selectedWheelIndex == 0 ? Colors.purple[700] : Colors.amber[800],
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
@@ -3339,18 +3894,49 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
+    final activeColor = _selectedWheelIndex == 0 ? Colors.purple[700]! : Colors.amber[800]!;
+
     return AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      titlePadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       title: Column(
         children: [
-          const Text('🎰 Lucky Wheel', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.purple)),
-          const SizedBox(height: 2),
-          Text('แต้มของคุณ: $globalUserScore แต้ม (ใช้ 20) • 🛡️ โล่: $globalUserShields', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('ตู้คลาสสิก (20แต้ม)'),
+                selected: _selectedWheelIndex == 0,
+                selectedColor: Colors.purple[100],
+                onSelected: _isSpinning
+                    ? null
+                    : (val) {
+                        if (val) setState(() => _selectedWheelIndex = 0);
+                      },
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('👑 VIP (100แต้ม)'),
+                selected: _selectedWheelIndex == 1,
+                selectedColor: Colors.amber[200],
+                onSelected: _isSpinning
+                    ? null
+                    : (val) {
+                        if (val) setState(() => _selectedWheelIndex = 1);
+                      },
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'แต้มของคุณ: $globalUserScore แต้ม • 🛡️ โล่: $globalUserShields',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
         ],
       ),
       content: SizedBox(
         width: 300,
-        height: 390,
+        height: 380,
         child: Column(
           children: [
             SizedBox(
@@ -3366,7 +3952,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                         angle: angle,
                         child: CustomPaint(
                           size: const Size(150, 150),
-                          painter: _WheelPainter(rewards: rewards),
+                          painter: _WheelPainter(rewards: currentRewards),
                         ),
                       );
                     },
@@ -3380,10 +3966,10 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                       child: const Icon(Icons.arrow_drop_down, color: Colors.redAccent, size: 32),
                     ),
                   ),
-                  const CircleAvatar(
+                  CircleAvatar(
                     radius: 16,
                     backgroundColor: Colors.white,
-                    child: Icon(Icons.stars, color: Colors.amber, size: 20),
+                    child: Icon(Icons.stars, color: activeColor, size: 20),
                   ),
                 ],
               ),
@@ -3393,29 +3979,31 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.purple[50],
+                  color: _selectedWheelIndex == 0 ? Colors.purple[50] : Colors.amber[50],
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.purple),
+                  border: Border.all(color: activeColor),
                 ),
                 child: Text(
                   '🎉 ผลลัพธ์: $_resultText',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.purple),
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: activeColor),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               )
             else
-              const Text('กดหมุนเพื่อลุ้นรับรางวัล!', style: TextStyle(color: Colors.grey, fontSize: 11)),
+              Text(
+                _selectedWheelIndex == 0 ? 'หมุนตู้คลาสสิก (ลุ้น +500 / กรอบ ⚡)' : 'หมุนตู้ VIP (ลุ้น +2,000 / กรอบ VIP 🪽)',
+                style: const TextStyle(color: Colors.grey, fontSize: 11),
+              ),
             const SizedBox(height: 8),
             const Divider(height: 1),
             const SizedBox(height: 4),
-            
             Row(
-              children: const [
-                Icon(Icons.history, size: 14, color: Colors.purple),
-                SizedBox(width: 4),
-                Text('ประวัติการสุ่มล่าสุด 📜', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.purple)),
+              children: [
+                Icon(Icons.history, size: 14, color: activeColor),
+                const SizedBox(width: 4),
+                Text('ประวัติการสุ่มล่าสุด 📜', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: activeColor)),
               ],
             ),
             const SizedBox(height: 4),
@@ -3428,9 +4016,7 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
-                    return Center(
-                      child: Text('โหลดประวัติไม่สำเร็จ (${snapshot.error})', style: const TextStyle(fontSize: 10, color: Colors.red)),
-                    );
+                    return const Center(child: Text('โหลดประวัติไม่สำเร็จ', style: TextStyle(fontSize: 10, color: Colors.red)));
                   }
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Center(child: CircularProgressIndicator(strokeWidth: 2));
@@ -3453,17 +4039,19 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                         padding: const EdgeInsets.symmetric(vertical: 1.5),
                         child: Row(
                           children: [
-                            Text('• ', style: TextStyle(color: Colors.purple[300], fontWeight: FontWeight.bold)),
+                            Text('• ', style: TextStyle(color: activeColor.withOpacity(0.5), fontWeight: FontWeight.bold)),
                             Text('$uName: ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10.5)),
                             Expanded(
                               child: Text(
                                 rLabel,
                                 style: TextStyle(
                                   fontSize: 10.5,
-                                  color: (rType == 'jackpot' || rLabel.contains('500') || rLabel.contains('กล่องสุ่ม')) 
-                                      ? Colors.red[700] 
+                                  color: (rType == 'jackpot' || rLabel.contains('500') || rLabel.contains('2,000') || rLabel.contains('กล่อง'))
+                                      ? Colors.red[700]
                                       : (rType == 'penalty' ? Colors.red : Colors.black87),
-                                  fontWeight: rLabel.contains('500') || rType == 'sub_title' || rType == 'sub_frame' ? FontWeight.bold : FontWeight.normal,
+                                  fontWeight: rLabel.contains('500') || rLabel.contains('2,000') || rType == 'fixed_title' || rType.contains('frame')
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -3487,13 +4075,13 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
         ),
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.purple[700],
+            backgroundColor: activeColor,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           ),
           onPressed: _isSpinning ? null : _spin,
           icon: const Icon(Icons.play_arrow, color: Colors.white, size: 18),
           label: Text(
-            _isSpinning ? 'กำลังหมุน...' : 'หมุนเลย (20 แต้ม)',
+            _isSpinning ? 'กำลังหมุน...' : 'หมุนเลย ($currentCost แต้ม)',
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
           ),
         ),
@@ -3562,7 +4150,7 @@ class _WheelPainter extends CustomPainter {
 }
 
 // ==========================================
-// LeaderboardScreen
+// LeaderboardScreen (จัดวาง 3 แท็บสมดุลกึ่งกลาง)
 // ==========================================
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -3572,6 +4160,10 @@ class LeaderboardScreen extends StatefulWidget {
 }
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
+  bool _isFeeding = false;
+  bool _isGachaSpinning = false;
+  bool _showHeart = false; // ตัวควบคุมเอฟเฟคหัวใจตอนให้อาหาร
+
   Future<void> _sendHeartToUser(String targetDocId, String targetUserName) async {
     if (targetDocId == globalUserId) return;
 
@@ -3602,16 +4194,44 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     final today = getTodayKey();
 
     try {
-      await targetUserRef.update({
-        'hearts': FieldValue.increment(1),
-      });
-
       final currentTimestamp = Timestamp.now();
+
+      await targetUserRef.update({'hearts': FieldValue.increment(1)});
+
+      final mySnap = await myUserRef.get();
+      final myData = mySnap.data() ?? {};
+
+      Map<String, dynamic> allDailyQuests = {};
+      if (myData['dailyQuests'] is Map) {
+        allDailyQuests = Map<String, dynamic>.from(myData['dailyQuests']);
+      }
+
+      Map<String, dynamic> todayQuest = {};
+      if (allDailyQuests[today] is Map) {
+        todayQuest = Map<String, dynamic>.from(allDailyQuests[today]);
+      }
+
+      List<dynamic> heartSentUsers = (todayQuest['heartSentUsers'] is List) ? List.from(todayQuest['heartSentUsers']) : [];
+      if (!heartSentUsers.contains(targetDocId)) {
+        heartSentUsers.add(targetDocId);
+      }
+      int heartSentTotal = (todayQuest['heartSentTotal'] is num) ? (todayQuest['heartSentTotal'] as num).toInt() : 0;
+      heartSentTotal += 1;
+
+      todayQuest['heartSentUsers'] = heartSentUsers;
+      todayQuest['heartSentTotal'] = heartSentTotal;
+      allDailyQuests[today] = todayQuest;
+
+      Map<String, dynamic> lastHeartMap = {};
+      if (myData['lastHeartSent'] is Map) {
+        lastHeartMap = Map<String, dynamic>.from(myData['lastHeartSent']);
+      }
+      lastHeartMap[targetDocId] = currentTimestamp;
+
       await myUserRef.set({
         'score': FieldValue.increment(1),
-        'lastHeartSent.$targetDocId': currentTimestamp,
-        'dailyQuests.$today.heartSentUsers': FieldValue.arrayUnion([targetDocId]),
-        'dailyQuests.$today.heartSentTotal': FieldValue.increment(1),
+        'lastHeartSent': lastHeartMap,
+        'dailyQuests': allDailyQuests,
       }, SetOptions(merge: true));
 
       setState(() {
@@ -3655,37 +4275,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         return Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: const SizedBox(height: 500, child: TeamChatBottomSheet()),
-        );
-      },
-    );
-  }
-
-  void _deleteUserProfileDialog(String docId, String userName) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('ลบโปรไฟล์ "$userName" ?', style: const TextStyle(fontWeight: FontWeight.bold)),
-          content: const Text('คุณต้องการลบโปรไฟล์นี้ออกจากระบบใช่หรือไม่?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () async {
-                await FirebaseFirestore.instance.collection('users').doc(docId).delete();
-                
-                if (docId == globalUserId) {
-                  await FirebaseAuth.instance.signOut();
-                }
-
-                if (context.mounted) Navigator.pop(context);
-              },
-              child: const Text('ลบโปรไฟล์', style: TextStyle(color: Colors.white)),
-            ),
-          ],
         );
       },
     );
@@ -3746,22 +4335,351 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     }
   }
 
+  // ฟังก์ชันสุ่มกาชาไอเทมสัตว์เลี้ยง (50 แต้ม)
+  void _spinPetGacha() async {
+    if (_isGachaSpinning) return;
+    _isGachaSpinning = true;
+
+    if (globalUserScore < 50) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ต้องการ 50 แต้มเพื่อสุ่มกาชาสัตว์เลี้ยง')),
+      );
+      _isGachaSpinning = false;
+      return;
+    }
+
+    final randomItem = petGachaDatabase[Random().nextInt(petGachaDatabase.length)];
+    final itemName = randomItem['name'] as String;
+
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+        'score': FieldValue.increment(-50),
+        'petInventory': FieldValue.arrayUnion([itemName]),
+      });
+
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Center(child: Text('🐾 กาชาสัตว์เลี้ยง 🐾', style: TextStyle(fontWeight: FontWeight.bold))),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('🎉 ยินดีด้วย! สุ่มได้รับไอเทม:', style: TextStyle(fontSize: 15)),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: Colors.amber[100], borderRadius: BorderRadius.circular(12)),
+                  child: Text(itemName, textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.amber[900])),
+                ),
+                const SizedBox(height: 10),
+                const Text('สามารถกดติดตั้งได้ในคลังไอเทมด้านล่าง!', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+            actions: [
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ตกลง', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+      }
+    } finally {
+      _isGachaSpinning = false;
+    }
+  }
+
+  // ฟังก์ชันให้อาหารสัตว์เลี้ยง (+20 EXP, ฟื้นฟู HP +10, มีเอฟเฟคหัวใจ)
+  void _feedPet() async {
+    if (_isFeeding) return;
+    _isFeeding = true;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? globalUserId;
+    if (uid.isEmpty) {
+      _isFeeding = false;
+      return;
+    }
+
+    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+
+    try {
+      bool levelUp = false;
+      int newLevel = 1;
+
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final snap = await transaction.get(userRef);
+        if (!snap.exists) return;
+
+        final data = snap.data()!;
+        final currentScore = (data['score'] is num) ? (data['score'] as num).toInt() : 0;
+
+        if (currentScore < 50) {
+          throw Exception('score_not_enough');
+        }
+
+        final petData = Map<String, dynamic>.from(data['pet'] ?? {});
+        int pExp = (petData['exp'] is num) ? (petData['exp'] as num).toInt() + 20 : 20;
+        int pLevel = (petData['level'] is num) ? (petData['level'] as num).toInt() : 1;
+        int pHp = (petData['hp'] is num) ? (petData['hp'] as num).toInt() : 100;
+        
+        // คำนวณ HP สูงสุดพื้นฐาน + โบนัสหมวก
+        final String hat = petData['equippedHat'] ?? '';
+        int maxHp = 80 + (pLevel * 20) + getItemBonusHp(hat);
+
+        while (pExp >= 100) {
+          pExp -= 100;
+          pLevel += 1;
+          levelUp = true;
+          maxHp = 80 + (pLevel * 20) + getItemBonusHp(hat);
+        }
+
+        // ฟื้นฟู HP ทีละ 10 แต่ไม่เกิน Max HP
+        pHp = min(maxHp, pHp + 10);
+
+        newLevel = pLevel;
+        petData['exp'] = pExp;
+        petData['level'] = pLevel;
+        petData['hp'] = pHp;
+
+        transaction.update(userRef, {
+          'score': currentScore - 50,
+          'pet': petData,
+        });
+      });
+
+      // เปิดเอฟเฟคหัวใจ
+      setState(() => _showHeart = true);
+      Timer(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _showHeart = false);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.green[700],
+            content: Text(levelUp
+                ? '🎉 สัตว์เลี้ยงเลเวลอัปเป็น Lv.$newLevel! ฟื้นฟู HP เต็มหลอดแล้ว ❤️'
+                : '🍖 ให้อาหารสำเร็จ (-50 แต้ม)! ได้รับ +20 EXP และฟื้นฟู HP +10 ❤️'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (e.toString().contains('score_not_enough') && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ต้องการ 50 แต้มเพื่อซื้ออาหารสัตว์เลี้ยง')),
+        );
+      }
+    } finally {
+      _isFeeding = false;
+    }
+  }
+
+  // ไดอะล็อกเปลี่ยนชื่อ & เลือกเปลี่ยนชนิดสัตว์เลี้ยง 18 ชนิด
+  void _showEditPetCustomizationDialog() {
+    final nameCtrl = TextEditingController(text: globalUserPet['name'] ?? 'น้องนำโชค');
+    String selectedType = globalUserPet['type'] ?? '🐱';
+
+    showDialog(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (context, setDlgState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Text('ตั้งค่าสัตว์เลี้ยง 🐾', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('เลือกชนิดสัตว์เลี้ยง (18 ชนิด):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: petTypesList.map((p) {
+                        final isSel = selectedType == p['type'];
+                        return ChoiceChip(
+                          avatar: Text(p['type']!, style: const TextStyle(fontSize: 16)),
+                          label: Text(p['name']!),
+                          selected: isSel,
+                          selectedColor: Colors.amber[200],
+                          onSelected: (val) {
+                            if (val) setDlgState(() => selectedType = p['type']!);
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'ชื่อสัตว์เลี้ยง',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx),
+                  child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
+                  onPressed: () async {
+                    final newName = nameCtrl.text.trim();
+                    if (newName.isEmpty) return;
+
+                    final updated = Map<String, dynamic>.from(globalUserPet);
+                    updated['name'] = newName;
+                    updated['type'] = selectedType;
+
+                    await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+                      'pet': updated,
+                    });
+
+                    setState(() {
+                      globalUserPet = updated;
+                    });
+
+                    if (dialogCtx.mounted) Navigator.pop(dialogCtx);
+                  },
+                  child: const Text('บันทึก', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ประลองสัตว์เลี้ยง Pet Battle PvP (ถ้าแพ้ HP จะลดลงตามดาเมจที่หักลบกัน)
+  void _startPetBattle(String enemyId, String enemyName, Map<String, dynamic> enemyPet) async {
+    final myPetName = globalUserPet['name'] ?? 'น้องนำโชค';
+    final myPetType = globalUserPet['type'] ?? '🐱';
+    final int myPetLevel = (globalUserPet['level'] is num) ? (globalUserPet['level'] as num).toInt() : 1;
+    final String myWeapon = globalUserPet['equippedWeapon'] ?? '';
+    final String myHat = globalUserPet['equippedHat'] ?? '';
+    final int myTotalAtk = 10 + (myPetLevel * 5) + getItemBonusAtk(myWeapon);
+    int myHp = (globalUserPet['hp'] is num) ? (globalUserPet['hp'] as num).toInt() : (80 + (myPetLevel * 20) + getItemBonusHp(myHat));
+
+    final enemyPetName = enemyPet['name'] ?? 'สัตว์เลี้ยงคู่แข่ง';
+    final enemyPetType = enemyPet['type'] ?? '🐶';
+    final int enemyPetLevel = (enemyPet['level'] is num) ? (enemyPet['level'] as num).toInt() : 1;
+    final String enemyWeapon = enemyPet['equippedWeapon'] ?? '';
+    final String enemyHat = enemyPet['equippedHat'] ?? '';
+    final int enemyTotalAtk = 10 + (enemyPetLevel * 5) + getItemBonusAtk(enemyWeapon);
+    int enemyHp = (enemyPet['hp'] is num) ? (enemyPet['hp'] as num).toInt() : (80 + (enemyPetLevel * 20) + getItemBonusHp(enemyHat));
+
+    final int turnsToDefeatEnemy = (enemyHp / max(1, myTotalAtk)).ceil();
+    final int turnsToDefeatMe = (myHp / max(1, enemyTotalAtk)).ceil();
+    final bool isIWin = turnsToDefeatEnemy <= turnsToDefeatMe;
+
+    // คำนวณ HP ที่เหลือหลังจากการต่อสู้
+    int damageTaken = 0;
+    if (!isIWin) {
+      damageTaken = max(5, enemyTotalAtk - myTotalAtk);
+      myHp = max(0, myHp - damageTaken);
+      
+      // อัปเดต HP ของเราลง Firestore ทันทีที่แพ้
+      final updatedPet = Map<String, dynamic>.from(globalUserPet);
+      updatedPet['hp'] = myHp;
+      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'pet': updatedPet});
+      setState(() => globalUserPet = updatedPet);
+    }
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Center(child: Text('⚔️ Pet Arena ศึกประลอง ⚔️', style: TextStyle(fontWeight: FontWeight.bold))),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  Column(
+                    children: [
+                      Text(myPetType, style: const TextStyle(fontSize: 36)),
+                      Text(myPetName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      Text('⚔️ $myTotalAtk | ❤️ HP: $myHp', style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const Text('VS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.redAccent)),
+                  Column(
+                    children: [
+                      Text(enemyPetType, style: const TextStyle(fontSize: 36)),
+                      Text('$enemyName ($enemyPetName)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      Text('⚔️ $enemyTotalAtk | ❤️ HP: $enemyHp', style: const TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isIWin ? Colors.green[50] : Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isIWin ? Colors.green : Colors.red),
+                ),
+                child: Text(
+                  isIWin 
+                      ? '🏆 ฝ่ายคุณชนะ! ได้รับ +5 แต้มโบนัส' 
+                      : '💥 คุณพ่ายแพ้และเสีย HP ไป -$damageTaken! (เหลือ HP: $myHp)',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.bold, color: isIWin ? Colors.green[900] : Colors.red[900]),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
+              onPressed: () {
+                if (isIWin) {
+                  FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+                    'score': FieldValue.increment(5),
+                  });
+                  setState(() => globalUserScore += 5);
+                }
+                Navigator.pop(ctx);
+              },
+              child: const Text('เสร็จสิ้น', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Leaderboard & Shop 🏆', style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text('Leaderboard, Pet & Shop 🏆', style: TextStyle(fontWeight: FontWeight.bold)),
           backgroundColor: Colors.amber[700],
           foregroundColor: Colors.white,
           bottom: const TabBar(
+            isScrollable: false,
             indicatorColor: Colors.white,
             labelColor: Colors.white,
             unselectedLabelColor: Colors.white70,
             tabs: [
-              Tab(icon: Icon(Icons.emoji_events), text: 'อันดับคะแนน'),
-              Tab(icon: Icon(Icons.shopping_bag), text: 'ร้านค้า & คลัง'),
+              Tab(icon: Icon(Icons.emoji_events), text: 'อันดับ'),
+              Tab(icon: Icon(Icons.pets), text: 'สัตว์เลี้ยง'),
+              Tab(icon: Icon(Icons.shopping_bag), text: 'ร้านค้า & วงล้อ'),
             ],
           ),
         ),
@@ -3783,12 +4701,31 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 globalUserHearts = (d['hearts'] is num) ? (d['hearts'] as num).toInt() : 0;
                 globalUserShields = (d['shields'] is num) ? (d['shields'] as num).toInt() : 0;
                 globalLastHeartSent = d['lastHeartSent'] != null ? Map<String, dynamic>.from(d['lastHeartSent']) : {};
+                globalUserPet = d['pet'] != null ? Map<String, dynamic>.from(d['pet']) : {};
+                globalPetInventory = List<dynamic>.from(d['petInventory'] ?? []);
                 break;
               }
             }
 
+            final petType = globalUserPet['type'] ?? '🐱';
+            final petName = globalUserPet['name'] ?? 'น้องนำโชค';
+            final petLevel = (globalUserPet['level'] is num) ? (globalUserPet['level'] as num).toInt() : 1;
+            final petExp = (globalUserPet['exp'] is num) ? (globalUserPet['exp'] as num).toInt() : 0;
+            final petWeapon = globalUserPet['equippedWeapon'] ?? 'ไม่มี';
+            final petHat = globalUserPet['equippedHat'] ?? 'ไม่มี';
+
+            final int baseAtk = 10 + (petLevel * 5);
+            final int bonusAtk = getItemBonusAtk(petWeapon);
+            final int totalAtk = baseAtk + bonusAtk;
+
+            final int baseHp = 80 + (petLevel * 20);
+            final int bonusHp = getItemBonusHp(petHat);
+            final int totalMaxHp = baseHp + bonusHp;
+            final int currentHp = (globalUserPet['hp'] is num) ? (globalUserPet['hp'] as num).toInt() : totalMaxHp;
+
             return TabBarView(
               children: [
+                // แท็บ 1: อันดับ
                 users.isEmpty
                     ? const Center(child: Text('ยังไม่มีข้อมูลคะแนน', style: TextStyle(fontSize: 18)))
                     : ListView.builder(
@@ -3805,6 +4742,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                           final frame = userData['frame'] ?? '';
                           final hearts = (userData['hearts'] is num) ? (userData['hearts'] as num).toInt() : 0;
                           final isMe = docId == globalUserId;
+                          final enemyPet = userData['pet'] != null ? Map<String, dynamic>.from(userData['pet']) : null;
 
                           return Card(
                             elevation: 2,
@@ -3844,42 +4782,19 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                     ),
                                 ],
                               ),
-                              subtitle: Row(
-                                children: [
-                                  Text('$score แต้ม', style: const TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
-                                  const SizedBox(width: 8),
-                                  Text('•  ❤️ $hearts', style: const TextStyle(fontSize: 13, color: Colors.pink, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
+                              subtitle: Text('$score แต้ม • ❤️ $hearts', style: const TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  IconButton(
-                                    icon: Icon(
-                                      isMe ? Icons.favorite : Icons.favorite_border,
-                                      color: isMe ? Colors.pink[300] : Colors.pink,
+                                  if (!isMe && enemyPet != null)
+                                    IconButton(
+                                      icon: const Icon(Icons.sports_kabaddi, color: Colors.deepOrange, size: 24),
+                                      tooltip: 'ท้าดวลสัตว์เลี้ยง (PvP)',
+                                      onPressed: () => _startPetBattle(docId, name, enemyPet),
                                     ),
-                                    tooltip: isMe ? 'หัวใจที่คุณได้รับ' : 'ส่งหัวใจให้กำลังใจ (ชั่วโมงละ 1 ครั้ง)',
+                                  IconButton(
+                                    icon: Icon(isMe ? Icons.favorite : Icons.favorite_border, color: Colors.pink),
                                     onPressed: isMe ? null : () => _sendHeartToUser(docId, name),
-                                  ),
-                                  PopupMenuButton<String>(
-                                    onSelected: (value) {
-                                      if (value == 'delete') {
-                                        _deleteUserProfileDialog(docId, name);
-                                      }
-                                    },
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.delete, color: Colors.red, size: 20),
-                                            SizedBox(width: 8),
-                                            Text('ลบโปรไฟล์'),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
                                   ),
                                 ],
                               ),
@@ -3888,6 +4803,216 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                         },
                       ),
 
+                // แท็บ 2: สัตว์เลี้ยง 3D + เลี้ยงดู + ตู้กาชาไอเทม (50 แต้ม)
+                ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Card(
+                      elevation: 4,
+                      color: Colors.orange[50],
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Colors.orange[300]!, width: 1.5)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            PetCharacter3DWidget(
+                              petType: petType,
+                              equippedWeapon: petWeapon,
+                              equippedHat: petHat,
+                              size: 190,
+                              showHeartEffect: _showHeart,
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text('$petName (Lv.$petLevel)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+                                const SizedBox(width: 6),
+                                IconButton(
+                                  icon: const Icon(Icons.edit, size: 18, color: Colors.deepOrange),
+                                  tooltip: 'เปลี่ยนชื่อ / ชนิดสัตว์เลี้ยง',
+                                  onPressed: _showEditPetCustomizationDialog,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: LinearProgressIndicator(
+                                value: petExp / 100.0,
+                                minHeight: 8,
+                                backgroundColor: Colors.orange[100],
+                                valueColor: const AlwaysStoppedAnimation<Color>(Colors.deepOrange),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text('EXP: $petExp/100', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                            const Divider(height: 20),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceAround,
+                              children: [
+                                Column(
+                                  children: [
+                                    Text('⚔️ ATK รวม: $totalAtk', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
+                                    Text('(พื้นฐาน $baseAtk + ไอเทม $bonusAtk)', style: const TextStyle(fontSize: 10.5, color: Colors.grey)),
+                                  ],
+                                ),
+                                Column(
+                                  children: [
+                                    Text('❤️ HP: $currentHp / $totalMaxHp', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.red)),
+                                    const Text('พลังชีวิตปัจจุบัน', style: TextStyle(fontSize: 10.5, color: Colors.grey)),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Text('🗡️ อาวุธที่ใส่: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                      Expanded(child: Text(petWeapon.isEmpty ? 'ไม่มี' : petWeapon, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
+                                      if (petWeapon != 'ไม่มี' && petWeapon.isNotEmpty)
+                                        TextButton(
+                                          style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 20)),
+                                          onPressed: () async {
+                                            await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'pet.equippedWeapon': 'ไม่มี'});
+                                            setState(() => globalUserPet['equippedWeapon'] = 'ไม่มี');
+                                          },
+                                          child: const Text('ถอด', style: TextStyle(color: Colors.red, fontSize: 11)),
+                                        ),
+                                    ],
+                                  ),
+                                  const Divider(height: 8),
+                                  Row(
+                                    children: [
+                                      const Text('🎩 หมวก/ประดับ: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                      Expanded(child: Text(petHat.isEmpty ? 'ไม่มี' : petHat, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis)),
+                                      if (petHat != 'ไม่มี' && petHat.isNotEmpty)
+                                        TextButton(
+                                          style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(40, 20)),
+                                          onPressed: () async {
+                                            await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'pet.equippedHat': 'ไม่มี'});
+                                            setState(() => globalUserPet['equippedHat'] = 'ไม่มี');
+                                          },
+                                          child: const Text('ถอด', style: TextStyle(color: Colors.red, fontSize: 11)),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.deepOrange,
+                                  padding: const EdgeInsets.symmetric(vertical: 11),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                onPressed: _feedPet,
+                                icon: const Icon(Icons.restaurant, color: Colors.white, size: 20),
+                                label: const Text('ให้อาหารสัตว์เลี้ยง (ใช้ 50 แต้ม +20 EXP +10 HP)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // การ์ดตู้กาชาสัตว์เลี้ยง (50 แต้ม)
+                    Card(
+                      elevation: 3,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFFF8008), Color(0xFFFFC837)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const CircleAvatar(
+                              radius: 26,
+                              backgroundColor: Colors.white24,
+                              child: Text('🎰', style: TextStyle(fontSize: 28)),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Text('ตู้กาชาไอเทมสัตว์เลี้ยง 🐾', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+                                  SizedBox(height: 2),
+                                  Text('สุ่มรับอาวุธ & หมวกเทพ 16 แบบ (+15 ถึง +100 พลัง)', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                                ],
+                              ),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.deepOrange,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              ),
+                              onPressed: _spinPetGacha,
+                              child: const Text('สุ่ม 50 แต้ม', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 18),
+                    const Text('🎒 คลังไอเทมสวมใส่ของคุณ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    if (globalPetInventory.isEmpty)
+                      const Text('ยังไม่มีไอเทม (กดสุ่มได้จากตู้กาชาด้านบน)', style: TextStyle(color: Colors.grey, fontSize: 13))
+                    else
+                      ...globalPetInventory.map((item) {
+                        final isEquipped = (petWeapon == item || petHat == item);
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          color: isEquipped ? Colors.amber[50] : Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(color: isEquipped ? Colors.amber[700]! : Colors.grey[300]!),
+                          ),
+                          child: ListTile(
+                            dense: true,
+                            title: Text(item.toString(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
+                            trailing: ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isEquipped ? Colors.green[600] : Colors.blue[900],
+                                minimumSize: const Size(60, 28),
+                              ),
+                              onPressed: () async {
+                                final isWeapon = item.toString().contains('ATK');
+                                final updateKey = isWeapon ? 'equippedWeapon' : 'equippedHat';
+                                final newEquip = isEquipped ? 'ไม่มี' : item.toString();
+
+                                await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+                                  'pet.$updateKey': newEquip,
+                                });
+                                setState(() => globalUserPet[updateKey] = newEquip);
+                              },
+                              child: Text(isEquipped ? 'ใช้งานอยู่' : 'สวมใส่', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                            ),
+                          ),
+                        );
+                      }),
+                  ],
+                ),
+
+                // แท็บ 3: ร้านค้า & Lucky Wheel (แสดงกรอบครบ 12 แบบ)
                 ListView(
                   padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 80),
                   children: [
@@ -3915,7 +5040,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // แบนเนอร์หมุนวงล้อ Lucky Wheel (20 แต้ม)
                     Card(
                       elevation: 4,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -3941,15 +5065,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: const [
-                                  Text(
-                                    'Lucky Wheel วงล้อเสี่ยงโชค',
-                                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                                  ),
+                                  Text('Lucky Wheel 2 ตู้เสี่ยงโชค', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
                                   SizedBox(height: 4),
-                                  Text(
-                                    'ลุ้น Jackpot +500 แต้ม, กล่องสุ่ม, โล่ 🛡️, กรอบรุ้ง 🌈 (20 แต้ม/ครั้ง)',
-                                    style: TextStyle(color: Colors.white70, fontSize: 11),
-                                  ),
+                                  Text('ตู้ Standard (20 แต้ม) หรือตู้ VIP (100 แต้ม) ลุ้น Jackpot 2,000 แต้ม!', style: TextStyle(color: Colors.white70, fontSize: 11)),
                                 ],
                               ),
                             ),
@@ -3968,8 +5086,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                    // จัดการกรอบโปรไฟล์ในคลัง (นีออน / ทอง / รุ้ง / เปลวไฟ / น้ำแข็ง)
-                    const Text('🖼️ กรอบโปรไฟล์ในคลัง', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text('🖼️ กรอบโปรไฟล์ในคลัง & โอกาสสุ่มได้ (12 แบบ)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -3980,11 +5097,17 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                         SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('สีรุ้ง 🌈', 'rainbow')),
                         SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('เปลวไฟ 🔥', 'fire')),
                         SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('น้ำแข็ง ❄️', 'ice')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('Challenger ⚡', 'challenger')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('สีเงิน 🥈', 'silver')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('สายลม 🍃', 'wind')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('ธาตุมืด 🌑', 'dark')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('มีปีก 🪽', 'wing')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('ออร่า 🔮', 'aura')),
+                        SizedBox(width: (MediaQuery.of(context).size.width - 56) / 3, child: _buildFrameCard('วิ้งๆ ✨', 'sparkle')),
                       ],
                     ),
                     const SizedBox(height: 20),
 
-                    // เลือกแลกและสลับฉายา
                     const Text('🎖️ ฉายา & คลังฉายา', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 12),
 
@@ -3993,12 +5116,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     _buildTitleItem('ยอดอัพเดตโต๊ะ 🥈', 500, myCurrentScore),
                     _buildTitleItem('ท่านเทพอัพเดตโต๊ะ 🥇', 700, myCurrentScore),
                     _buildTitleItem('GMจอมขยัน 👑', 1000, myCurrentScore),
-                    if (globalUnlockedTitles.contains('ราชาเกลือแห่งปี 🧂')) _buildTitleItem('ราชาเกลือแห่งปี 🧂', 0, myCurrentScore),
-                    if (globalUnlockedTitles.contains('เซียนพูลหน้ามน 🎱')) _buildTitleItem('เซียนพูลหน้ามน 🎱', 0, myCurrentScore),
-                    if (globalUnlockedTitles.contains('ทาสแมวตัวจริง 🐾')) _buildTitleItem('ทาสแมวตัวจริง 🐾', 0, myCurrentScore),
-                    if (globalUnlockedTitles.contains('พนักงานดีเด่น ☕')) _buildTitleItem('พนักงานดีเด่น ☕', 0, myCurrentScore),
-                    if (globalUnlockedTitles.contains('ดวงดีจัดๆ ⭐')) _buildTitleItem('ดวงดีจัดๆ ⭐', 0, myCurrentScore),
-                    if (globalUnlockedTitles.contains('นักเสี่ยงดวงแห่งปี 🎰')) _buildTitleItem('นักเสี่ยงดวงแห่งปี 🎰', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('ไร้พ่าย No.1')) _buildTitleItem('👑 ไร้พ่าย No.1', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('มหาเศรษฐีตัวจริง')) _buildTitleItem('💰 มหาเศรษฐีตัวจริง', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('เทพแห่งดวงดาว 🌌')) _buildTitleItem('🌌 เทพแห่งดวงดาว', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('พนักงานระดับตำนาน 🌟')) _buildTitleItem('🌟 พนักงานระดับตำนาน', 0, myCurrentScore),
+                    if (globalUnlockedTitles.contains('ราชาเกลือ VIP 🧂')) _buildTitleItem('🧂 ราชาเกลือ VIP', 0, myCurrentScore),
                   ],
                 ),
               ],
@@ -4110,10 +5232,10 @@ class TeamChatBottomSheet extends StatefulWidget {
 class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
   final TextEditingController _msgController = TextEditingController();
 
-  void _sendMessage() {
+  void _sendMessage() async {
     final text = _msgController.text.trim();
     if (text.isNotEmpty && globalUserId.isNotEmpty) {
-      FirebaseFirestore.instance.collection('chat_messages').add({
+      await FirebaseFirestore.instance.collection('chat_messages').add({
         'senderId': globalUserId,
         'senderName': globalUserName,
         'senderAvatar': globalUserAvatar,
@@ -4122,6 +5244,8 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
         'timestamp': Timestamp.now(),
       });
       _msgController.clear();
+
+      await recordCustomDailyQuest('hasChattedToday', true);
     }
   }
 
@@ -4197,7 +5321,7 @@ class _TeamChatBottomSheetState extends State<TeamChatBottomSheet> {
                         ],
                         Flexible(
                           child: Column(
-                            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               if (!isMe)
                                 Text(
