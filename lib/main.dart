@@ -515,7 +515,6 @@ class PremiumMeowCardWidget extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         child: Column(
           children: [
-            // 1. ป้ายระดับความหายากด้านบน
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
@@ -530,8 +529,6 @@ class PremiumMeowCardWidget extends StatelessWidget {
                 style: TextStyle(color: borderColor, fontSize: 9, fontWeight: FontWeight.bold),
               ),
             ),
-            
-            // 2. อิโมจิขนาดใหญ่ตรงกลาง (ย่อ/ขยายตามพื้นที่ ป้องกันล้น 100%)
             Expanded(
               child: Center(
                 child: Container(
@@ -550,8 +547,6 @@ class PremiumMeowCardWidget extends StatelessWidget {
                 ),
               ),
             ),
-
-            // 3. ชื่อการ์ดและค่า Power ด้านล่างสุด
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
@@ -635,13 +630,22 @@ Future<void> registerUserUpdateAction(BuildContext? context, {String? collection
 
     int pExp = (petData['exp'] is num) ? (petData['exp'] as num).toInt() + 5 : 5;
     int pLevel = (petData['level'] is num) ? (petData['level'] as num).toInt() : 1;
+    bool petLeveledUp = false;
 
     while (pExp >= 100) {
       pExp -= 100;
       pLevel += 1;
+      petLeveledUp = true;
     }
     petData['exp'] = pExp;
     petData['level'] = pLevel;
+
+    // ถ้าเลเวลอัป ให้คำนวณ Max HP ใหม่แล้วรีเซ็ต HP ให้เต็มทันที
+    if (petLeveledUp) {
+      final String hat = petData['equippedHat'] ?? '';
+      int maxHp = 80 + (pLevel * 20) + getItemBonusHp(hat);
+      petData['hp'] = maxHp;
+    }
 
     Map<String, dynamic> allDailyQuests = {};
     if (userData['dailyQuests'] is Map) {
@@ -2130,7 +2134,7 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
             return Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
-                mainAxisSize: dynamicSize,
+                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
@@ -2743,8 +2747,6 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
     );
   }
 }
-
-const dynamicSize = MainAxisSize.min;
 
 // ==========================================
 // TableGrid
@@ -3746,7 +3748,7 @@ class LastUpdateWidget extends StatelessWidget {
 }
 
 // ==========================================
-// Lucky Wheel Dialog
+// Lucky Wheel Dialog (แก้ปัญหา Overflow ด้วย Wrap)
 // ==========================================
 class LuckyWheelDialog extends StatefulWidget {
   final int currentScore;
@@ -4050,11 +4052,13 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
       titlePadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       title: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 6,
+            runSpacing: 4,
             children: [
               ChoiceChip(
-                label: const Text('ตู้คลาสสิก (20แต้ม)'),
+                label: const Text('คลาสสิก (20แต้ม)', style: TextStyle(fontSize: 12)),
                 selected: _selectedWheelIndex == 0,
                 selectedColor: Colors.purple[100],
                 onSelected: _isSpinning
@@ -4063,9 +4067,8 @@ class _LuckyWheelDialogState extends State<LuckyWheelDialog> with SingleTickerPr
                         if (val) setState(() => _selectedWheelIndex = 0);
                       },
               ),
-              const SizedBox(width: 8),
               ChoiceChip(
-                label: const Text('👑 VIP (100แต้ม)'),
+                label: const Text('👑 VIP (100แต้ม)', style: TextStyle(fontSize: 12)),
                 selected: _selectedWheelIndex == 1,
                 selectedColor: Colors.amber[200],
                 onSelected: _isSpinning
@@ -4603,9 +4606,362 @@ class CardInventoryDialog extends StatelessWidget {
     );
   }
 }
+// ==========================================
+// ⚔️ มินิเกมประลองสัตว์เลี้ยงแบบเห็นการต่อสู้ (Animated Pet Battle Arena)
+// ==========================================
+class AnimatedPetBattleDialog extends StatefulWidget {
+  final String enemyId;
+  final String enemyName;
+  final Map<String, dynamic> enemyPet;
+
+  const AnimatedPetBattleDialog({
+    super.key,
+    required this.enemyId,
+    required this.enemyName,
+    required this.enemyPet,
+  });
+
+  @override
+  State<AnimatedPetBattleDialog> createState() => _AnimatedPetBattleDialogState();
+}
+
+class _AnimatedPetBattleDialogState extends State<AnimatedPetBattleDialog> with TickerProviderStateMixin {
+  late int myMaxHp;
+  late int myHp;
+  late int myAtk;
+  late String myName;
+  late String myType;
+  late String myWeapon;
+  late String myHat;
+
+  late int enemyMaxHp;
+  late int enemyHp;
+  late int enemyAtk;
+  late String enemyPetName;
+  late String enemyType;
+  late String enemyWeapon;
+  late String enemyHat;
+
+  late AnimationController _myAttackController;
+  late AnimationController _enemyAttackController;
+  late Animation<double> _myAttackAnim;
+  late Animation<double> _enemyAttackAnim;
+
+  List<String> combatLogs = [];
+  bool isBattleEnded = false;
+  bool isPlayerWon = false;
+  String? currentEffect;
+  String? currentDamage;
+  bool isTargetEnemy = true;
+  int calculatedDamageTaken = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final myLvl = (globalUserPet['level'] is num) ? (globalUserPet['level'] as num).toInt() : 1;
+    myName = globalUserPet['name'] ?? 'น้องนำโชค';
+    myType = globalUserPet['type'] ?? '🐱';
+    myWeapon = globalUserPet['equippedWeapon'] ?? '';
+    myHat = globalUserPet['equippedHat'] ?? '';
+    myAtk = 10 + (myLvl * 5) + getItemBonusAtk(myWeapon);
+    myMaxHp = 80 + (myLvl * 20) + getItemBonusHp(myHat);
+    myHp = (globalUserPet['hp'] is num) ? (globalUserPet['hp'] as num).toInt() : myMaxHp;
+
+    final enemyLvl = (widget.enemyPet['level'] is num) ? (widget.enemyPet['level'] as num).toInt() : 1;
+    enemyPetName = widget.enemyPet['name'] ?? 'สัตว์เลี้ยงคู่แข่ง';
+    enemyType = widget.enemyPet['type'] ?? '🐶';
+    enemyWeapon = widget.enemyPet['equippedWeapon'] ?? '';
+    enemyHat = widget.enemyPet['equippedHat'] ?? '';
+    enemyAtk = 10 + (enemyLvl * 5) + getItemBonusAtk(enemyWeapon);
+    enemyMaxHp = 80 + (enemyLvl * 20) + getItemBonusHp(enemyHat);
+    enemyHp = (widget.enemyPet['hp'] is num) ? (widget.enemyPet['hp'] as num).toInt() : enemyMaxHp;
+
+    _myAttackController = AnimationController(vsync: this, duration: const Duration(milliseconds: 350));
+    _myAttackAnim = Tween<double>(begin: 0.0, end: 40.0).animate(
+      CurvedAnimation(parent: _myAttackController, curve: Curves.easeInOutBack),
+    );
+
+    _enemyAttackController = AnimationController(vsync: this, duration: const Duration(milliseconds: 350));
+    _enemyAttackAnim = Tween<double>(begin: 0.0, end: -40.0).animate(
+      CurvedAnimation(parent: _enemyAttackController, curve: Curves.easeInOutBack),
+    );
+
+    _startBattleSequence();
+  }
+
+  @override
+  void dispose() {
+    _myAttackController.dispose();
+    _enemyAttackController.dispose();
+    super.dispose();
+  }
+
+  void _startBattleSequence() async {
+    await Future.delayed(const Duration(milliseconds: 700));
+    if (!mounted) return;
+
+    // คำนวณผลแพ้ชนะจากสูตรเดิม (เปรียบเทียบ Turns ในการตีจนตาย)
+    final int turnsToDefeatEnemy = (enemyHp / max(1, myAtk)).ceil();
+    final int turnsToDefeatMe = (myHp / max(1, enemyAtk)).ceil();
+    isPlayerWon = turnsToDefeatEnemy <= turnsToDefeatMe;
+
+    // 1. เทิร์นผู้เล่นพุ่งโจมตี
+    await _myAttackController.forward();
+    await _myAttackController.reverse();
+
+    if (mounted) {
+      setState(() {
+        currentEffect = '💥';
+        currentDamage = '-$myAtk';
+        isTargetEnemy = true;
+        combatLogs.insert(0, '⚡ $myName โจมตีด้วยพลัง $myAtk ATK!');
+      });
+    }
+
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+    setState(() {
+      currentEffect = null;
+      currentDamage = null;
+    });
+
+    // 2. เทิร์นศัตรูพุ่งสวนกลับ
+    await _enemyAttackController.forward();
+    await _enemyAttackController.reverse();
+
+    if (mounted) {
+      setState(() {
+        currentEffect = '⚔️';
+        currentDamage = '-$enemyAtk';
+        isTargetEnemy = false;
+        combatLogs.insert(0, '🔥 $enemyPetName สวนกลับด้วยพลัง $enemyAtk ATK!');
+      });
+    }
+
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+    setState(() {
+      currentEffect = null;
+      currentDamage = null;
+    });
+
+    // 3. สรุปผล: ถ้าแพ้ เลือดจะลดตามส่วนต่างพลังโจมตี (ไม่ใช่ลดจนเหลือ 0)
+    final updatedPet = Map<String, dynamic>.from(globalUserPet);
+
+    if (isPlayerWon) {
+      combatLogs.insert(0, '🏆 $myName เอาชนะการประลองได้อย่างงดงาม!');
+      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+        'score': FieldValue.increment(5),
+      });
+      globalUserScore += 5;
+    } else {
+      calculatedDamageTaken = max(5, enemyAtk - myAtk);
+      myHp = max(0, myHp - calculatedDamageTaken);
+      updatedPet['hp'] = myHp;
+
+      combatLogs.insert(0, '💥 คุณพ่ายแพ้! ได้รับความเสียหายหักลบ -$calculatedDamageTaken HP');
+      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
+        'pet': updatedPet,
+      });
+      globalUserPet = updatedPet;
+    }
+
+    if (mounted) {
+      setState(() {
+        isBattleEnded = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: const Color(0xFF161B22),
+      contentPadding: const EdgeInsets.all(16),
+      content: SizedBox(
+        width: 320,
+        height: 480,
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: const [
+                Icon(Icons.sports_kabaddi, color: Colors.amber, size: 24),
+                SizedBox(width: 8),
+                Text('Pet Arena ประลอง ⚔️', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
+            ),
+            const Divider(color: Colors.white24, height: 16),
+            
+            // สนามประลอง (Arena Field)
+            Expanded(
+              flex: 5,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      // ฝั่งผู้เล่น (Player)
+                      AnimatedBuilder(
+                        animation: _myAttackAnim,
+                        builder: (context, child) {
+                          return Transform.translate(
+                            offset: Offset(_myAttackAnim.value, 0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(myType, style: const TextStyle(fontSize: 46)),
+                                const SizedBox(height: 4),
+                                Text(myName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  width: 85,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: myMaxHp > 0 ? (myHp / myMaxHp).clamp(0.0, 1.0) : 0,
+                                      minHeight: 6,
+                                      backgroundColor: Colors.white24,
+                                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.greenAccent),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text('❤️ $myHp/$myMaxHp', style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                                Text('⚔️ ATK: $myAtk', style: const TextStyle(color: Colors.cyanAccent, fontSize: 9.5)),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+
+                      const Text('VS', style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 18)),
+
+                      // ฝั่งศัตรู (Enemy)
+                      AnimatedBuilder(
+                        animation: _enemyAttackAnim,
+                        builder: (context, child) {
+                          return Transform.translate(
+                            offset: Offset(_enemyAttackAnim.value, 0),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(enemyType, style: const TextStyle(fontSize: 46)),
+                                const SizedBox(height: 4),
+                                Text(enemyPetName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  width: 85,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: enemyMaxHp > 0 ? (enemyHp / enemyMaxHp).clamp(0.0, 1.0) : 0,
+                                      minHeight: 6,
+                                      backgroundColor: Colors.white24,
+                                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.redAccent),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text('❤️ $enemyHp/$enemyMaxHp', style: const TextStyle(color: Colors.redAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                                Text('⚔️ ATK: $enemyAtk', style: const TextStyle(color: Colors.orangeAccent, fontSize: 9.5)),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+
+                  // Floating Damage / Effect
+                  if (currentEffect != null && currentDamage != null)
+                    Positioned(
+                      left: isTargetEnemy ? 190 : 45,
+                      top: 35,
+                      child: Column(
+                        children: [
+                          Text(currentEffect!, style: const TextStyle(fontSize: 28)),
+                          Text(currentDamage!, style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 18)),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // Combat Log Box
+            Expanded(
+              flex: 4,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black45,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: combatLogs.isEmpty
+                    ? const Center(child: Text('⚔️ กำลังเตรียมการประลอง...', style: TextStyle(color: Colors.grey, fontSize: 12)))
+                    : ListView.builder(
+                        itemCount: combatLogs.length,
+                        itemBuilder: (context, idx) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2.0),
+                            child: Text(
+                              combatLogs[idx],
+                              style: TextStyle(
+                                color: idx == 0 ? Colors.amberAccent : Colors.white70,
+                                fontSize: 11,
+                                fontWeight: idx == 0 ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            // ปุ่มผลลัพธ์
+            if (isBattleEnded)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isPlayerWon ? Colors.green[700] : Colors.red[700],
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    isPlayerWon ? '🎉 ชนะการประลอง (+5 แต้ม)! ตกลง' : '💥 พ่ายแพ้ (-$calculatedDamageTaken HP)! ตกลง',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              )
+            else
+              const Text('⚔️ การต่อสู้กำลังดำเนินอยู่...', style: TextStyle(color: Colors.grey, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 // ==========================================
-// LeaderboardScreen (3 แท็บมาตรฐาน + ปุ่มเปิดซองและคลังการ์ดใต้ร้านค้า)
+// LeaderboardScreen
 // ==========================================
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
@@ -4901,6 +5257,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           maxHp = 80 + (pLevel * 20) + getItemBonusHp(hat);
         }
 
+        if (levelUp) {
+          pHp = maxHp; // รีเซ็ตเลือดเต็มหลอดทันทีเมื่อเลเวลอัป
+        } else {
+          pHp = min(maxHp, pHp + 10); // ถ้าไม่เลเวลอัป ฟื้นฟูปกติ +10
+        }
+
         pHp = min(maxHp, pHp + 10);
 
         newLevel = pLevel;
@@ -5022,109 +5384,22 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     );
   }
 
-  void _startPetBattle(String enemyId, String enemyName, Map<String, dynamic> enemyPet) async {
-    final myPetName = globalUserPet['name'] ?? 'น้องนำโชค';
-    final myPetType = globalUserPet['type'] ?? '🐱';
-    final int myPetLevel = (globalUserPet['level'] is num) ? (globalUserPet['level'] as num).toInt() : 1;
-    final String myWeapon = globalUserPet['equippedWeapon'] ?? '';
-    final String myHat = globalUserPet['equippedHat'] ?? '';
-    final int myTotalAtk = 10 + (myPetLevel * 5) + getItemBonusAtk(myWeapon);
-    int myHp = (globalUserPet['hp'] is num) ? (globalUserPet['hp'] as num).toInt() : (80 + (myPetLevel * 20) + getItemBonusHp(myHat));
-
-    final enemyPetName = enemyPet['name'] ?? 'สัตว์เลี้ยงคู่แข่ง';
-    final enemyPetType = enemyPet['type'] ?? '🐶';
-    final int enemyPetLevel = (enemyPet['level'] is num) ? (enemyPet['level'] as num).toInt() : 1;
-    final String enemyWeapon = enemyPet['equippedWeapon'] ?? '';
-    final String enemyHat = enemyPet['equippedHat'] ?? '';
-    final int enemyTotalAtk = 10 + (enemyPetLevel * 5) + getItemBonusAtk(enemyWeapon);
-    int enemyHp = (enemyPet['hp'] is num) ? (enemyPet['hp'] as num).toInt() : (80 + (enemyPetLevel * 20) + getItemBonusHp(enemyHat));
-
-    final int turnsToDefeatEnemy = (enemyHp / max(1, myTotalAtk)).ceil();
-    final int turnsToDefeatMe = (myHp / max(1, enemyTotalAtk)).ceil();
-    final bool isIWin = turnsToDefeatEnemy <= turnsToDefeatMe;
-
-    int damageTaken = 0;
-    if (!isIWin) {
-      damageTaken = max(5, enemyTotalAtk - myTotalAtk);
-      myHp = max(0, myHp - damageTaken);
-      
-      final updatedPet = Map<String, dynamic>.from(globalUserPet);
-      updatedPet['hp'] = myHp;
-      await FirebaseFirestore.instance.collection('users').doc(globalUserId).update({'pet': updatedPet});
-      setState(() => globalUserPet = updatedPet);
-    }
-
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Center(child: Text('⚔️ Pet Arena ศึกประลอง ⚔️', style: TextStyle(fontWeight: FontWeight.bold))),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  Column(
-                    children: [
-                      Text(myPetType, style: const TextStyle(fontSize: 36)),
-                      Text(myPetName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      Text('⚔️ $myTotalAtk | ❤️ HP: $myHp', style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const Text('VS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20, color: Colors.redAccent)),
-                  Column(
-                    children: [
-                      Text(enemyPetType, style: const TextStyle(fontSize: 36)),
-                      Text('$enemyName ($enemyPetName)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      Text('⚔️ $enemyTotalAtk | ❤️ HP: $enemyHp', style: const TextStyle(fontSize: 11, color: Colors.red, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isIWin ? Colors.green[50] : Colors.red[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: isIWin ? Colors.green : Colors.red),
-                ),
-                child: Text(
-                  isIWin 
-                      ? '🏆 ฝ่ายคุณชนะ! ได้รับ +5 แต้มโบนัส' 
-                      : '💥 คุณพ่ายแพ้และเสีย HP ไป -$damageTaken! (เหลือ HP: $myHp)',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.bold, color: isIWin ? Colors.green[900] : Colors.red[900]),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[900]),
-              onPressed: () {
-                if (isIWin) {
-                  FirebaseFirestore.instance.collection('users').doc(globalUserId).update({
-                    'score': FieldValue.increment(5),
-                  });
-                  setState(() => globalUserScore += 5);
-                }
-                Navigator.pop(ctx);
-              },
-              child: const Text('เสร็จสิ้น', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      );
-    }
+  void _startPetBattle(String enemyId, String enemyName, Map<String, dynamic> enemyPet) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AnimatedPetBattleDialog(
+        enemyId: enemyId,
+        enemyName: enemyName,
+        enemyPet: enemyPet,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3, // 📌 3 แท็บตามเดิม
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Rank, Pet & Shop 🏆', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -5385,7 +5660,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // 🏆 Pet Level Leaderboard (ลบคำว่า "สูงสุดในทีม" ออกแล้ว)
+                    // 🏆 Pet Level Leaderboard (เรียงลำดับตามเลเวลสัตว์เลี้ยงจากมากไปน้อย)
                     Card(
                       elevation: 3,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -5404,35 +5679,48 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                             const Divider(height: 16),
                             SizedBox(
                               height: 140,
-                              child: ListView.builder(
-                                itemCount: users.length,
-                                itemBuilder: (context, idx) {
-                                  final uData = users[idx].data() as Map<String, dynamic>;
-                                  final uName = uData['name'] ?? 'Staff';
-                                  final pMap = uData['pet'] is Map ? uData['pet'] as Map<String, dynamic> : {};
-                                  final pType = pMap['type'] ?? '🐱';
-                                  final pName = pMap['name'] ?? 'สัตว์เลี้ยง';
-                                  final pLvl = (pMap['level'] is num) ? (pMap['level'] as num).toInt() : 1;
+                              child: Builder(
+                                builder: (context) {
+                                  final sortedUsersByPetLevel = List<QueryDocumentSnapshot>.from(users);
+                                  sortedUsersByPetLevel.sort((a, b) {
+                                    final pMapA = (a.data() as Map<String, dynamic>)['pet'] is Map ? (a.data() as Map<String, dynamic>)['pet'] as Map<String, dynamic> : {};
+                                    final pMapB = (b.data() as Map<String, dynamic>)['pet'] is Map ? (b.data() as Map<String, dynamic>)['pet'] as Map<String, dynamic> : {};
+                                    final int lvlA = (pMapA['level'] is num) ? (pMapA['level'] as num).toInt() : 1;
+                                    final int lvlB = (pMapB['level'] is num) ? (pMapB['level'] as num).toInt() : 1;
+                                    return lvlB.compareTo(lvlA);
+                                  });
 
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 3),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Row(
+                                  return ListView.builder(
+                                    itemCount: sortedUsersByPetLevel.length,
+                                    itemBuilder: (context, idx) {
+                                      final uData = sortedUsersByPetLevel[idx].data() as Map<String, dynamic>;
+                                      final uName = uData['name'] ?? 'Staff';
+                                      final pMap = uData['pet'] is Map ? uData['pet'] as Map<String, dynamic> : {};
+                                      final pType = pMap['type'] ?? '🐱';
+                                      final pName = pMap['name'] ?? 'สัตว์เลี้ยง';
+                                      final pLvl = (pMap['level'] is num) ? (pMap['level'] as num).toInt() : 1;
+
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 3),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
-                                            Text('${idx + 1}. ', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12)),
-                                            Text('$pType $pName ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                            Text('($uName)', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                            Row(
+                                              children: [
+                                                Text('${idx + 1}. ', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey, fontSize: 12)),
+                                                Text('$pType $pName ', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                                Text('($uName)', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                              ],
+                                            ),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                              decoration: BoxDecoration(color: Colors.orange[100], borderRadius: BorderRadius.circular(8)),
+                                              child: Text('Lv.$pLvl', style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.bold, fontSize: 12)),
+                                            ),
                                           ],
                                         ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                          decoration: BoxDecoration(color: Colors.orange[100], borderRadius: BorderRadius.circular(8)),
-                                          child: Text('Lv.$pLvl', style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.bold, fontSize: 12)),
-                                        ),
-                                      ],
-                                    ),
+                                      );
+                                    },
                                   );
                                 },
                               ),
@@ -5529,7 +5817,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   ],
                 ),
 
-                // แท็บ 3: ร้านค้า & วงล้อ (ย้ายแบนเนอร์ซองสุ่มการ์ดและปุ่มดูคลังการ์ดมาไว้ใต้ Lucky Wheel)
+                // แท็บ 3: ร้านค้า & วงล้อ
                 ListView(
                   padding: const EdgeInsets.only(top: 16, left: 16, right: 16, bottom: 80),
                   children: [
@@ -5603,7 +5891,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 14),
 
-                    // 📦 แบนเนอร์เปิดซองการ์ดอวกาศ (ย้ายมาไว้ใต้ Lucky Wheel)
                     Card(
                       elevation: 4,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -5650,7 +5937,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ),
                     const SizedBox(height: 14),
 
-                    // 🖼️ ปุ่มกดเปิดดูคลังการ์ดสะสม
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
