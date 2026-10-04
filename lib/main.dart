@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -2254,7 +2255,193 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
       }
     }
   }
+// --- โค้ดที่เพิ่มเข้าไปในจุดที่ 1 ---
+  void _showAllReservationsDialog(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.6,
+          minChildSize: 0.4,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) {
+            return FutureBuilder<List<Map<String, dynamic>>>(
+              future: _fetchAllReservations(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
+                final reservations = snapshot.data ?? [];
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.calendar_month, color: Colors.orange[800], size: 24),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'ตารางการจองโต๊ะวันนี้ 📅',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.orange[50],
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.orange),
+                            ),
+                            child: Text(
+                              '${reservations.length} โต๊ะ',
+                              style: TextStyle(
+                                color: Colors.orange[900],
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 20),
+                      if (reservations.isEmpty)
+                        const Expanded(
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.event_available, size: 48, color: Colors.grey),
+                                SizedBox(height: 8),
+                                Text(
+                                  'ยังไม่มีรายการจองโต๊ะในขณะนี้',
+                                  style: TextStyle(color: Colors.grey, fontSize: 15),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        Expanded(
+                          child: ListView.builder(
+                            controller: scrollController,
+                            itemCount: reservations.length,
+                            itemBuilder: (context, index) {
+                              final item = reservations[index];
+                              final floor = item['floor'] ?? '';
+                              final name = item['name'] ?? '';
+                              final time = item['time'] ?? '';
+                              final game = item['game'] ?? '';
+                              final by = item['updatedBy'] ?? '';
+
+                              return Card(
+                                elevation: 2,
+                                margin: const EdgeInsets.symmetric(vertical: 6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  side: BorderSide(color: Colors.orange[200]!),
+                                ),
+                                color: Colors.orange[50],
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: Colors.orange[800],
+                                    foregroundColor: Colors.white,
+                                    child: const Icon(Icons.access_time_filled, size: 20),
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      Text(
+                                        name,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue[900],
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          floor,
+                                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (game.toString().isNotEmpty)
+                                        Text('🎲 บอร์ดเกม: $game', style: TextStyle(color: Colors.purple[900], fontWeight: FontWeight.bold, fontSize: 12)),
+                                      Text('โดย: $by', style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                    ],
+                                  ),
+                                  trailing: Text(
+                                    time,
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange[900],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAllReservations() async {
+    List<Map<String, dynamic>> results = [];
+    for (int i = 0; i < _collections.length; i++) {
+      final snap = await FirebaseFirestore.instance
+          .collection(_collections[i])
+          .where('reservedTime', isGreaterThan: '')
+          .get();
+
+      for (var doc in snap.docs) {
+        final d = doc.data();
+        results.add({
+          'floor': _menuTitles[i],
+          'name': d['name'] ?? '',
+          'time': d['reservedTime'] ?? '',
+          'game': d['currentGame'] ?? '',
+          'updatedBy': d['updatedBy'] ?? '',
+        });
+      }
+    }
+    results.sort((a, b) => (a['time'] as String).compareTo(b['time'] as String));
+    return results;
+  }
   void _showAddTableDialog(BuildContext context, int activeIndex) {
     final TextEditingController nameController = TextEditingController();
 
@@ -2732,14 +2919,12 @@ class _TableStatusScreenState extends State<TableStatusScreen> {
                 ),
               ],
             ),
-            floatingActionButton: FloatingActionButton(
-              onPressed: () {
-                final int currentTabIndex = DefaultTabController.of(tabContext).index;
-                _showAddTableDialog(context, currentTabIndex);
-              },
+            floatingActionButton: FloatingActionButton.extended(
+              onPressed: () => _showAllReservationsDialog(context),
               backgroundColor: Colors.blue[900],
               foregroundColor: Colors.white,
-              child: const Icon(Icons.add, size: 28),
+              icon: const Icon(Icons.calendar_month, size: 22),
+              label: const Text('ตารางจองวันนี้', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           );
         },
@@ -2861,7 +3046,7 @@ class TableGrid extends StatelessWidget {
   }
 }
 // ==========================================
-// FloorPlanCard
+// FloorPlanCard (ระบบโต๊ะ + ระบุเกมลอยนอกโต๊ะ + จองเวลาแบบเลื่อน)
 // ==========================================
 class FloorPlanCard extends StatefulWidget {
   final String expectedName;
@@ -2901,6 +3086,113 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
 
   bool get _hasQueueSystem {
     return widget.expectedName.contains('พูล') || widget.expectedName == 'ห้องกระจก';
+  }
+
+  Future<void> _updateTableData(String docId, Map<String, dynamic> updates) async {
+    final String userDisplayName = globalUserTitle.isNotEmpty 
+        ? '$globalUserName [$globalUserTitle]' 
+        : globalUserName;
+    
+    updates['lastUpdated'] = Timestamp.now();
+    updates['updatedBy'] = userDisplayName;
+
+    await FirebaseFirestore.instance.collection(widget.collectionName).doc(docId).update(updates);
+    if (mounted) await registerUserUpdateAction(context, collectionName: widget.collectionName);
+  }
+
+  void _showEditGameDialog(BuildContext context, String docId, String currentGame) {
+    final gameCtrl = TextEditingController(text: currentGame);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('🎲 ระบุบอร์ดเกมที่กำลังเล่น', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        content: TextField(
+          controller: gameCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'เช่น Avalon, Splendor, UNO...',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.purple[700]),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _updateTableData(docId, {'currentGame': gameCtrl.text.trim()});
+            },
+            child: const Text('บันทึก', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ระบบเลือกเวลาแบบ Scroll Wheel (เลื่อนขึ้นลง)
+  Future<void> _selectReservationTime(BuildContext context, String docId) async {
+    DateTime now = DateTime.now();
+    DateTime initialDateTime = DateTime(now.year, now.month, now.day, now.hour, now.minute);
+    DateTime? pickedDateTime;
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))
+      ),
+      builder: (BuildContext builderContext) {
+        return SizedBox(
+          height: 280,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(builderContext), 
+                      child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey, fontSize: 16))
+                    ),
+                    const Text('เลือกเวลาจอง', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    TextButton(
+                      onPressed: () {
+                        pickedDateTime ??= initialDateTime;
+                        Navigator.pop(builderContext, pickedDateTime);
+                      },
+                      child: Text('ตกลง', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 16))
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: CupertinoDatePicker(
+                  mode: CupertinoDatePickerMode.time,
+                  use24hFormat: true,
+                  initialDateTime: initialDateTime,
+                  onDateTimeChanged: (DateTime newDateTime) {
+                    pickedDateTime = newDateTime;
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    ).then((result) async {
+      if (result != null && result is DateTime) {
+        final timeString = '${result.hour.toString().padLeft(2, '0')}:${result.minute.toString().padLeft(2, '0')}';
+        await _updateTableData(docId, {
+          'reservedTime': timeString,
+          'isAvailable': false, 
+        });
+      }
+    });
   }
 
   void _showMergeDialog(BuildContext context, String currentDocId, String currentName) {
@@ -3101,53 +3393,6 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
     }
   }
 
-  void _showTableOptionsBottomSheet(BuildContext context, String docId, String tableName, String? mergedGroupId) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('จัดการ "$tableName"', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              const Divider(),
-              if (mergedGroupId != null)
-                ListTile(
-                  leading: const Icon(Icons.link_off, color: Colors.orange, size: 26),
-                  title: const Text('แยกโต๊ะออกจากกลุ่ม', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  subtitle: const Text('ยกเลิกการรวมกลุ่มและเปลี่ยนเป็นโต๊ะเดี่ยว'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _unmergeTables(context, mergedGroupId);
-                  },
-                )
-              else
-                ListTile(
-                  leading: const Icon(Icons.link, color: Colors.blue, size: 26),
-                  title: const Text('รวมโต๊ะกับโต๊ะอื่น', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  subtitle: const Text('เชื่อมต่อกับโต๊ะ 1-5 อื่นๆ ในชั้น 1'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showMergeDialog(context, docId, tableName);
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.delete, color: Colors.red, size: 26),
-                title: const Text('ลบโต๊ะออกจากระบบ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
-                onTap: () {
-                  Navigator.pop(context);
-                  widget.onDelete(docId, tableName);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   void _showQueueDialog(BuildContext context, String docId, Map<String, dynamic> data) {
     final List<dynamic> queueList = (data['waitingQueue'] is List) ? List.from(data['waitingQueue']) : [];
     final nameCtrl = TextEditingController();
@@ -3314,6 +3559,73 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
     );
   }
 
+  void _showTableOptionsBottomSheet(BuildContext context, String docId, String tableName, String? mergedGroupId, String reservedTime) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('จัดการ "$tableName"', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              const Divider(),
+              
+              if (reservedTime.isEmpty)
+                ListTile(
+                  leading: const Icon(Icons.access_time_filled, color: Colors.orange, size: 26),
+                  title: const Text('จองโต๊ะล่วงหน้า', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.orange)),
+                  subtitle: const Text('ระบุเวลาที่ลูกค้าจองไว้ (โต๊ะจะเปลี่ยนเป็นสีส้ม)'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _selectReservationTime(context, docId);
+                  },
+                )
+              else
+                ListTile(
+                  leading: const Icon(Icons.timer_off, color: Colors.grey, size: 26),
+                  title: const Text('ยกเลิกการจองล่วงหน้า', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    await _updateTableData(docId, {'reservedTime': '', 'isAvailable': true});
+                  },
+                ),
+
+              if (mergedGroupId != null)
+                ListTile(
+                  leading: const Icon(Icons.link_off, color: Colors.blue, size: 26),
+                  title: const Text('แยกโต๊ะออกจากกลุ่ม', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _unmergeTables(context, mergedGroupId);
+                  },
+                )
+              else if (_isMergeableTable)
+                ListTile(
+                  leading: const Icon(Icons.link, color: Colors.blue, size: 26),
+                  title: const Text('รวมโต๊ะกับโต๊ะอื่น', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showMergeDialog(context, docId, tableName);
+                  },
+                ),
+              
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red, size: 26),
+                title: const Text('ลบโต๊ะออกจากระบบ', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 16)),
+                onTap: () {
+                  Navigator.pop(context);
+                  widget.onDelete(docId, tableName);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     QueryDocumentSnapshot? targetDoc;
@@ -3333,7 +3645,7 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
         color: Colors.grey[100],
         elevation: 0,
         shape: widget.isCircle
-            ? const CircleBorder(side: BorderSide(color: Colors.grey, width: 2, style: BorderStyle.solid))
+            ? const CircleBorder(side: BorderSide(color: Colors.grey, width: 2))
             : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.grey, width: 2)),
         child: InkWell(
           customBorder: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -3346,6 +3658,8 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
                     await FirebaseFirestore.instance.collection(widget.collectionName).add({
                       'name': widget.expectedName,
                       'isAvailable': true,
+                      'currentGame': '',
+                      'reservedTime': '',
                       'lastUpdated': Timestamp.now(),
                       'updatedBy': userDisplayName,
                       'waitingQueue': [],
@@ -3369,8 +3683,11 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
     final List<dynamic>? mergedWith = data['mergedWith'];
     final List<dynamic> queueList = (data['waitingQueue'] is List) ? List.from(data['waitingQueue']) : [];
     final Timestamp? ts = data['lastUpdated'];
+    
+    final String currentGame = data['currentGame'] ?? '';
+    final String reservedTime = data['reservedTime'] ?? '';
 
-    if (widget.onlyAvailable && !isAvailable) {
+    if (widget.onlyAvailable && (!isAvailable && reservedTime.isEmpty)) {
       return Opacity(
         opacity: 0.25,
         child: Card(
@@ -3400,147 +3717,203 @@ class _FloorPlanCardState extends State<FloorPlanCard> {
       timeStr = ' ($h:$m น.)';
     }
 
-    return Card(
-      elevation: mergedGroupId != null ? 6 : 4,
-      color: isAvailable ? Colors.green[50] : Colors.red[50],
-      shape: widget.isCircle
-          ? CircleBorder(side: BorderSide(color: isAvailable ? Colors.green : Colors.red, width: 2))
-          : RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(
-                color: mergedGroupId != null ? Colors.blue[900]! : (isAvailable ? Colors.green : Colors.red),
-                width: mergedGroupId != null ? 2.5 : 2,
-              ),
-            ),
-      child: InkWell(
-        customBorder: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        onTap: _isToggling
-            ? null
-            : () async {
-                setState(() => _isToggling = true);
-                try {
-                  if (mergedGroupId != null) {
-                    await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
-                  } else {
-                    await FirebaseFirestore.instance.collection(widget.collectionName).doc(docId).update({
-                      'isAvailable': !isAvailable,
-                      'lastUpdated': Timestamp.now(),
-                      'updatedBy': userDisplayName,
-                    });
-                    if (context.mounted) await registerUserUpdateAction(context, collectionName: widget.collectionName);
-                  }
-                } finally {
-                  if (mounted) setState(() => _isToggling = false);
-                }
+    Color? cardBgColor;
+    Color borderColor;
+    
+    if (reservedTime.isNotEmpty) {
+      cardBgColor = Colors.orange[50];
+      borderColor = Colors.orange;
+    } else if (isAvailable) {
+      cardBgColor = Colors.green[50];
+      borderColor = Colors.green;
+    } else {
+      cardBgColor = Colors.red[50];
+      borderColor = Colors.red;
+    }
+
+    if (mergedGroupId != null) borderColor = Colors.blue[900]!;
+
+    // สร้างระบบซ้อน Widget เพื่อป้องกันข้อความระบุเกมดันจน UI ล้น (แก้บัคเอ๋อ)
+    return Stack(
+      clipBehavior: Clip.none, 
+      children: [
+        // กรอบโต๊ะหลัก (Card จะถูกขยายให้เต็มพื้นที่ด้วย Positioned.fill)
+        Positioned.fill(
+          child: Card(
+            margin: EdgeInsets.zero,
+            elevation: (mergedGroupId != null || reservedTime.isNotEmpty) ? 6 : 4,
+            color: cardBgColor,
+            shape: widget.isCircle
+                ? CircleBorder(side: BorderSide(color: borderColor, width: 2))
+                : RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(color: borderColor, width: mergedGroupId != null ? 2.5 : 2),
+                  ),
+            child: InkWell(
+              customBorder: widget.isCircle ? const CircleBorder() : RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              onTap: _isToggling
+                  ? null
+                  : () async {
+                      setState(() => _isToggling = true);
+                      try {
+                        if (reservedTime.isNotEmpty) {
+                          await _updateTableData(docId, {'reservedTime': '', 'isAvailable': false});
+                        } else if (mergedGroupId != null) {
+                          await _toggleMergedGroupAvailability(context, mergedGroupId, isAvailable);
+                        } else {
+                          final nextStatus = !isAvailable;
+                          await _updateTableData(docId, {
+                            'isAvailable': nextStatus,
+                            'currentGame': nextStatus ? '' : currentGame, 
+                          });
+                        }
+                      } finally {
+                        if (mounted) setState(() => _isToggling = false);
+                      }
+                    },
+              onLongPress: () {
+                _showTableOptionsBottomSheet(context, docId, widget.expectedName, mergedGroupId, reservedTime);
               },
-        onLongPress: () {
-          if (_isMergeableTable) {
-            _showTableOptionsBottomSheet(context, docId, widget.expectedName, mergedGroupId);
-          } else {
-            widget.onDelete(docId, widget.expectedName);
-          }
-        },
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: widget.isCircle ? 16.0 : 8.0, vertical: 4.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    widget.expectedName,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-                  ),
-                  const SizedBox(height: 3),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: isAvailable ? Colors.green : Colors.red,
-                      borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: widget.isCircle ? 16.0 : 8.0, vertical: 4.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      widget.expectedName,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(isAvailable ? Icons.check_circle : Icons.cancel, color: Colors.white, size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          isAvailable ? 'ว่าง' : 'ไม่ว่าง',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (mergedGroupId != null && mergedWith != null) ...[
                     const SizedBox(height: 3),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.blue[900],
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '🔗 ${mergedWith.join("+")}',
-                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 3),
-                  Text(
-                    'โดย: $updatedBy$timeStr',
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10.5, color: Colors.grey[800], fontStyle: FontStyle.italic),
-                  ),
-                ],
-              ),
-            ),
-            if (_hasQueueSystem)
-              Positioned(
-                top: 6,
-                right: 6,
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _showQueueDialog(context, docId, data),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: queueList.isNotEmpty ? Colors.amber[800] : Colors.blue[900],
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 2, offset: Offset(0, 1))],
+                        color: reservedTime.isNotEmpty ? Colors.orange : (isAvailable ? Colors.green : Colors.red),
+                        borderRadius: BorderRadius.circular(20),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            queueList.isNotEmpty ? Icons.people : Icons.person_add_alt_1,
-                            size: 13,
-                            color: Colors.white,
+                            reservedTime.isNotEmpty ? Icons.access_time_filled : (isAvailable ? Icons.check_circle : Icons.cancel), 
+                            color: Colors.white, size: 14
                           ),
-                          const SizedBox(width: 3),
+                          const SizedBox(width: 4),
                           Text(
-                            queueList.isNotEmpty ? '${queueList.length} คิว' : '+คิว',
-                            style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                            reservedTime.isNotEmpty ? 'จอง $reservedTime' : (isAvailable ? 'ว่าง' : 'ไม่ว่าง'),
+                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
                     ),
+                    if (mergedGroupId != null && mergedWith != null) ...[
+                      const SizedBox(height: 3),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[900],
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '🔗 ${mergedWith.join("+")}',
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 3),
+                    Text(
+                      'โดย: $updatedBy$timeStr',
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 10.5, color: Colors.grey[800], fontStyle: FontStyle.italic),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // ป้ายแจ้งจำนวนคิว (ลอยอยู่นอกมุมขวาบน)
+        if (_hasQueueSystem)
+          Positioned(
+            top: -6,
+            right: -6,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _showQueueDialog(context, docId, data),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: queueList.isNotEmpty ? Colors.amber[800] : Colors.blue[900],
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 2, offset: Offset(0, 1))],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        queueList.isNotEmpty ? Icons.people : Icons.person_add_alt_1,
+                        size: 13,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        queueList.isNotEmpty ? '${queueList.length} คิว' : '+คิว',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ],
                   ),
                 ),
               ),
-          ],
-        ),
-      ),
+            ),
+          ),
+
+        // ป้ายบอร์ดเกม (ลอยยื่นออกจากขอบล่างของโต๊ะ เพื่อไม่ให้เบียดกันจน UI พัง)
+        if (!isAvailable || reservedTime.isNotEmpty)
+          Positioned(
+            bottom: -14, // ดึงป้ายให้ลอยต่ำลงมาล้นขอบนอกโต๊ะ
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GestureDetector(
+                onTap: () => _showEditGameDialog(context, docId, currentGame),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: currentGame.isEmpty ? Colors.white : Colors.purple[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: currentGame.isEmpty ? Colors.grey[400]! : Colors.purple, width: 1.5),
+                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 2, offset: Offset(0, 2))],
+                  ),
+                  child: Text(
+                    currentGame.isEmpty ? '+ ระบุบอร์ดเกม' : '🎲 $currentGame',
+                    style: TextStyle(
+                      fontSize: 11, 
+                      fontWeight: FontWeight.bold, 
+                      color: currentGame.isEmpty ? Colors.black54 : Colors.purple[900]
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
+
+// ==========================================
+// ส่วนประกอบผังร้าน (Floor Plans)
+// ==========================================
 
 Widget _buildDoor(String label) {
   return Container(
@@ -3746,7 +4119,405 @@ class LastUpdateWidget extends StatelessWidget {
     );
   }
 }
+// ==========================================
+// 🧹 มินิเกมจัดระเบียบโต๊ะคาเฟ่ (Tidy Up Drag & Drop)
+// ==========================================
+class TidyUpMinigameDialog extends StatefulWidget {
+  const TidyUpMinigameDialog({super.key});
 
+  @override
+  State<TidyUpMinigameDialog> createState() => _TidyUpMinigameDialogState();
+}
+
+class _TidyUpItem {
+  final int id;
+  final String category; // 'card', 'dice', 'token', 'meeple'
+  final String emoji;
+  final String label;
+
+  const _TidyUpItem({
+    required this.id,
+    required this.category,
+    required this.emoji,
+    required this.label,
+  });
+}
+
+class _TidyUpMinigameDialogState extends State<TidyUpMinigameDialog> {
+  static const int gameDuration = 30; // เวลาเล่น 30 วินาที
+  late Timer _timer;
+  int _secondsLeft = gameDuration;
+  bool _isGameOver = false;
+  bool _isWon = false;
+
+  // รายการกล่องเก็บของ 4 หมวดหมู่
+  final Map<String, Map<String, dynamic>> _bins = {
+    'card': {'name': 'กล่องใส่การ์ด', 'icon': '🃏', 'color': Colors.blue},
+    'dice': {'name': 'ถาดใส่ลูกเต๋า', 'icon': '🎲', 'color': Colors.deepOrange},
+    'token': {'name': 'ถุงเหรียญโทเคน', 'icon': '🪙', 'color': Colors.amber},
+    'meeple': {'name': 'ช่องเก็บมีเปิล', 'icon': '♟️', 'color': Colors.purple},
+  };
+
+  // ไอเทมที่กระจายอยู่บนโต๊ะทั้งหมด 8 ชิ้น
+  late List<_TidyUpItem> _itemsOnTable;
+  final Map<String, int> _sortedCount = {'card': 0, 'dice': 0, 'token': 0, 'meeple': 0};
+
+  @override
+  void initState() {
+    super.initState();
+    _startNewGame();
+  }
+
+  void _startNewGame() {
+    _secondsLeft = gameDuration;
+    _isGameOver = false;
+    _isWon = false;
+    _sortedCount.updateAll((key, value) => 0);
+
+    // รายการอุปกรณ์บอร์ดเกมที่วางเกะกะบนโต๊ะ
+    _itemsOnTable = [
+      const _TidyUpItem(id: 1, category: 'card', emoji: '🃏', label: 'การ์ดเวทมนตร์'),
+      const _TidyUpItem(id: 2, category: 'card', emoji: '🎴', label: 'การ์ดบทบาท'),
+      const _TidyUpItem(id: 3, category: 'dice', emoji: '🎲', label: 'เต๋า 6 หน้า'),
+      const _TidyUpItem(id: 4, category: 'dice', emoji: '🎯', label: 'เต๋าแต้มพิเศษ'),
+      const _TidyUpItem(id: 5, category: 'token', emoji: '🪙', label: 'เหรียญทอง'),
+      const _TidyUpItem(id: 6, category: 'token', emoji: '💎', label: 'อัญมณี'),
+      const _TidyUpItem(id: 7, category: 'meeple', emoji: '♟️', label: 'มีเปิลอัศวิน'),
+      const _TidyUpItem(id: 8, category: 'meeple', emoji: '🧙', label: 'ฟิกเกอร์พ่อมด'),
+    ]..shuffle();
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      if (_secondsLeft > 0) {
+        setState(() => _secondsLeft--);
+      } else {
+        _timer.cancel();
+        setState(() {
+          _isGameOver = true;
+          _isWon = false;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  Future<void> _handleGameVictory() async {
+    _timer.cancel();
+    setState(() {
+      _isGameOver = true;
+      _isWon = true;
+    });
+
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? globalUserId;
+    if (currentUid.isNotEmpty) {
+      globalUserScore += 50;
+      await FirebaseFirestore.instance.collection('users').doc(currentUid).set({
+        'score': FieldValue.increment(50),
+      }, SetOptions(merge: true));
+    }
+  }
+
+  void _onItemDropped(_TidyUpItem item, String binCategory) {
+    if (item.category == binCategory) {
+      setState(() {
+        _itemsOnTable.removeWhere((i) => i.id == item.id);
+        _sortedCount[binCategory] = (_sortedCount[binCategory] ?? 0) + 1;
+      });
+
+      if (_itemsOnTable.isEmpty) {
+        _handleGameVictory();
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ ใส่ผิดกล่อง! ดูหมวดหมู่อุปกรณ์ให้ดีนะ'),
+          duration: Duration(milliseconds: 600),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: const Color(0xFFF8FAFC),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ส่วนหัว: หัวข้อ และ ตัวนับเวลา
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: const [
+                    Text('🧹', style: TextStyle(fontSize: 24)),
+                    SizedBox(width: 8),
+                    Text(
+                      'จัดระเบียบบอร์ดเกม',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _secondsLeft <= 5 ? Colors.red[100] : Colors.blue[100],
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _secondsLeft <= 5 ? Colors.red : Colors.blue[900]!,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.timer,
+                        size: 16,
+                        color: _secondsLeft <= 5 ? Colors.red : Colors.blue[900],
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$_secondsLeft วิ',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _secondsLeft <= 5 ? Colors.red : Colors.blue[900],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'ลากอุปกรณ์บนโต๊ะไปหย่อนลงกล่องเก็บให้ถูกต้องก่อนหมดเวลา (+50 แต้ม)',
+              style: TextStyle(color: Colors.black54, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            const Divider(height: 16),
+
+            if (!_isGameOver) ...[
+              // โซนกล่องจัดเก็บ 4 ช่อง (Drop Targets)
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 2.2,
+                physics: const NeverScrollableScrollPhysics(),
+                children: _bins.entries.map((entry) {
+                  final cat = entry.key;
+                  final info = entry.value;
+                  final Color color = info['color'];
+
+                  return DragTarget<_TidyUpItem>(
+                    onWillAcceptWithDetails: (details) => true,
+                    onAcceptWithDetails: (details) => _onItemDropped(details.data, cat),
+                    builder: (context, candidateData, rejectedData) {
+                      final bool isHovered = candidateData.isNotEmpty;
+
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        decoration: BoxDecoration(
+                          color: isHovered ? color.withOpacity(0.25) : color.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: isHovered ? color : color.withOpacity(0.4),
+                            width: isHovered ? 2.5 : 1.5,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(info['icon'], style: const TextStyle(fontSize: 26)),
+                            const SizedBox(width: 8),
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  info['name'],
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12.5,
+                                    color: color is MaterialColor ? color[800] : color,
+                                  ),
+                                ),
+                                Text(
+                                  'เก็บแล้ว: ${_sortedCount[cat]} ชิ้น',
+                                  style: const TextStyle(fontSize: 10.5, color: Colors.black54),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                }).toList(),
+              ),
+
+              const SizedBox(height: 16),
+
+              // โซนโต๊ะคาเฟ่ (อุปกรณ์ที่วางเกะกะ)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE2E8F0),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.blueGrey[200]!, width: 2),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '🪑 โต๊ะที่ต้องเคลียร์:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blueGrey),
+                        ),
+                        Text(
+                          'เหลืออีก ${_itemsOnTable.length} ชิ้น',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.deepOrange),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: _itemsOnTable.map((item) {
+                        final itemWidget = Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
+                            ],
+                            border: Border.all(color: Colors.grey[300]!),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(item.emoji, style: const TextStyle(fontSize: 18)),
+                              const SizedBox(width: 4),
+                              Text(
+                                item.label,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        );
+
+                        return Draggable<_TidyUpItem>(
+                          data: item,
+                          feedback: Material(
+                            color: Colors.transparent,
+                            child: Transform.scale(
+                              scale: 1.15,
+                              child: Opacity(opacity: 0.85, child: itemWidget),
+                            ),
+                          ),
+                          childWhenDragging: Opacity(
+                            opacity: 0.25,
+                            child: itemWidget,
+                          ),
+                          child: itemWidget,
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              // หน้าต่างสรุปผล แพ้ / ชนะ
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                child: Column(
+                  children: [
+                    Text(_isWon ? '🎉' : '⏰', style: const TextStyle(fontSize: 54)),
+                    const SizedBox(height: 10),
+                    Text(
+                      _isWon ? 'เก็บโต๊ะเรียบร้อยสมบูรณ์!' : 'หมดเวลาซะแล้ว!',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 20,
+                        color: _isWon ? Colors.green[800] : Colors.red[800],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _isWon
+                          ? 'โต๊ะสะอาดเอี่ยมพร้อมรับลูกค้ากลุ่มถัดไป ✨'
+                          : 'อุปกรณ์ยังเก็บไม่ครบ ลองใหม่อีกรอบนะ!',
+                      style: const TextStyle(color: Colors.black54, fontSize: 13),
+                    ),
+                    if (_isWon) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber[100],
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.amber[600]!),
+                        ),
+                        child: Text(
+                          '+50 แต้มโบนัส! 🌟',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber[900],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 14),
+
+            // ปุ่มปิด / เริ่มใหม่
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (_isGameOver)
+                  TextButton.icon(
+                    onPressed: () => setState(() => _startNewGame()),
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('เล่นอีกครั้ง'),
+                  ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[900],
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('ปิด', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 // ==========================================
 // Lucky Wheel Dialog (แก้ปัญหา Overflow ด้วย Wrap)
 // ==========================================
@@ -5936,6 +6707,61 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                       ),
                     ),
                     const SizedBox(height: 14),
+                    // =====================================
+                    // 🧹 Card มินิเกมจัดระเบียบโต๊ะคาเฟ่
+                    // =====================================
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF00B4DB), Color(0xFF0083B0)], // ไล่สีโทนฟ้า-น้ำเงิน
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            const CircleAvatar(
+                              radius: 28,
+                              backgroundColor: Colors.white24,
+                              child: Text('🧹', style: TextStyle(fontSize: 30)),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Text('มินิเกม: จัดระเบียบโต๊ะ ✨', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                                  SizedBox(height: 4),
+                                  Text('เคลียร์โต๊ะให้เสร็จใน 30 วิ รับโบนัส 50 แต้ม!', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                                ],
+                              ),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: Colors.blue[900],
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              ),
+                              onPressed: () {
+                                showDialog(
+                                  context: context,
+                                  barrierDismissible: false,
+                                  builder: (context) => const TidyUpMinigameDialog(),
+                                );
+                              },
+                              child: const Text('เล่นเลย', style: TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // =====================================
 
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
